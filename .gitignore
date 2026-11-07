@@ -1,0 +1,7 @@
+# Secrets: Wi-Fi password and TV client keys
+esp32-controller/include/config.h
+
+# PlatformIO / editor
+.pio/
+.vscode/
+__pycache__/

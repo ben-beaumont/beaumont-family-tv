@@ -1,0 +1,410 @@
+// Family Hub - ESP32 controller for LG webOS TVs
+//
+// - Keeps a connection to each TV (the TV's local control API, port 3001)
+// - Watches which app is in front and whether the screen is on
+// - When a TV has been idle (home screen / screensaver) for a while,
+//   opens the dashboard page in the TV's web browser
+// - Wakes a TV at scheduled times with Wake-on-LAN and shows the dashboard
+// - Serves the stand-in dashboard and a status page itself
+//
+// Web endpoints on the ESP32:
+//   /                 the dashboard page (dark clock for now)
+//   /status           JSON: what each TV is doing
+//   /launch?tv=N      show the dashboard on TV N now
+//   /wake?tv=N        wake TV N and show the dashboard
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WiFiUdp.h>
+#include <WebServer.h>
+#include <Preferences.h>
+#include <ArduinoJson.h>
+#include <WebSocketsClient.h>
+#include <time.h>
+
+#include "config.h"
+#include "page.h"
+
+// Permissions requested when pairing. Same list as the Python script, so the
+// client key it got from the lounge TV works here too.
+static const char* PERMISSIONS[] = {
+  "APP_TO_APP", "CLOSE", "CONTROL_AUDIO", "CONTROL_DISPLAY",
+  "CONTROL_INPUT_JOYSTICK", "CONTROL_INPUT_MEDIA_PLAYBACK",
+  "CONTROL_INPUT_MEDIA_RECORDING", "CONTROL_INPUT_TEXT", "CONTROL_INPUT_TV",
+  "CONTROL_MOUSE_AND_KEYBOARD", "CONTROL_POWER", "CONTROL_TV_SCREEN", "LAUNCH",
+  "LAUNCH_WEBAPP", "READ_APP_STATUS", "READ_COUNTRY_INFO", "READ_CURRENT_CHANNEL",
+  "READ_INPUT_DEVICE_LIST", "READ_INSTALLED_APPS", "READ_LGE_SDX",
+  "READ_LGE_TV_INPUT_EVENTS", "READ_NETWORK_STATE", "READ_NOTIFICATIONS",
+  "READ_POWER_STATE", "READ_RUNNING_APPS", "READ_SETTINGS", "READ_TV_CHANNEL_LIST",
+  "READ_TV_CURRENT_TIME", "READ_UPDATE_INFO", "SEARCH", "TEST_OPEN",
+  "TEST_PROTECTED", "TEST_SECURE", "UPDATE_FROM_REMOTE_APP",
+  "WRITE_NOTIFICATION_ALERT", "WRITE_NOTIFICATION_TOAST", "WRITE_SETTINGS",
+};
+
+static const uint32_t WAKE_LAUNCH_WINDOW_MS = 5UL * 60 * 1000;  // give up showing after a wake
+static const uint32_t IDLE_MS = (uint32_t)IDLE_MINUTES * 60 * 1000;
+
+struct Tv {
+  const TvConfig* cfg = nullptr;
+  int index = 0;
+  bool enabled = false;
+  WebSocketsClient ws;
+  String key;
+  bool connected = false;
+  bool registered = false;
+  String fgApp;            // foreground app id
+  String power;            // "Active", "Screen Off", "Active Standby", ...
+  uint32_t idleSince = 0;  // millis() when it went idle; 0 = not idle
+  uint32_t launchDeadline = 0;  // after a scheduled wake: show the dashboard until this time
+};
+
+static constexpr size_t NUM_TVS = sizeof(TV_CONFIG) / sizeof(TV_CONFIG[0]);
+static Tv tvs[NUM_TVS];
+static WebServer server(80);
+static Preferences prefs;
+
+#define LOG(tv, fmt, ...) Serial.printf("[%s] " fmt "\n", (tv).cfg->name, ##__VA_ARGS__)
+
+// ------------------------------------------------------------------ helpers
+
+static String dashboardUrl() {
+  return "http://" + WiFi.localIP().toString() + "/";
+}
+
+static bool isIdleApp(const String& app) {
+  for (const char* a : IDLE_APPS) {
+    if (app == a) return true;
+  }
+  return false;
+}
+
+static bool withinTakeoverHours() {
+  struct tm t;
+  if (!getLocalTime(&t, 0)) return true;  // no clock yet: don't block
+  return t.tm_hour >= TAKEOVER_START_HOUR && t.tm_hour < TAKEOVER_END_HOUR;
+}
+
+static void sendDoc(Tv& tv, JsonDocument& doc) {
+  String s;
+  serializeJson(doc, s);
+  tv.ws.sendTXT(s);
+}
+
+static void ssap(Tv& tv, const char* type, const char* id, const char* uri,
+                 JsonObjectConst payload = JsonObjectConst()) {
+  JsonDocument doc;
+  doc["type"] = type;
+  doc["id"] = id;
+  doc["uri"] = uri;
+  if (!payload.isNull()) doc["payload"] = payload;
+  sendDoc(tv, doc);
+}
+
+static void saveKey(Tv& tv) {
+  char k[8];
+  snprintf(k, sizeof k, "k%d", tv.index);
+  prefs.putString(k, tv.key);
+}
+
+static String loadKey(int index) {
+  char k[8];
+  snprintf(k, sizeof k, "k%d", index);
+  return prefs.getString(k, "");
+}
+
+// ------------------------------------------------------------- TV actions
+
+static void sendRegister(Tv& tv) {
+  JsonDocument doc;
+  doc["type"] = "register";
+  doc["id"] = "register_0";
+  JsonObject p = doc["payload"].to<JsonObject>();
+  p["forcePairing"] = false;
+  p["pairingType"] = "PROMPT";
+  if (tv.key.length()) p["client-key"] = tv.key;
+  JsonObject m = p["manifest"].to<JsonObject>();
+  m["appVersion"] = "1.1";
+  m["manifestVersion"] = 1;
+  JsonArray perms = m["permissions"].to<JsonArray>();
+  for (const char* perm : PERMISSIONS) perms.add(perm);
+  sendDoc(tv, doc);
+}
+
+static void launchDashboard(Tv& tv) {
+  JsonDocument pl;
+  pl["target"] = dashboardUrl();
+  ssap(tv, "request", "launch", "ssap://system.launcher/open", pl.as<JsonObjectConst>());
+  LOG(tv, "showing dashboard %s", dashboardUrl().c_str());
+}
+
+static bool parseMac(const char* s, uint8_t mac[6]) {
+  unsigned int b[6];
+  if (sscanf(s, "%x%*c%x%*c%x%*c%x%*c%x%*c%x", &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) != 6)
+    return false;
+  for (int i = 0; i < 6; i++) mac[i] = (uint8_t)b[i];
+  return true;
+}
+
+static void wakeOnLan(Tv& tv) {
+  uint8_t mac[6];
+  if (!parseMac(tv.cfg->mac, mac)) {
+    LOG(tv, "can't wake: no MAC address set in config.h");
+    return;
+  }
+  uint8_t pkt[102];
+  memset(pkt, 0xFF, 6);
+  for (int i = 0; i < 16; i++) memcpy(pkt + 6 + i * 6, mac, 6);
+  WiFiUDP udp;
+  for (int r = 0; r < 3; r++) {
+    udp.beginPacket(WiFi.broadcastIP(), 9);
+    udp.write(pkt, sizeof pkt);
+    udp.endPacket();
+    delay(50);
+  }
+  LOG(tv, "sent Wake-on-LAN");
+}
+
+static void wakeAndShow(Tv& tv) {
+  if (!tv.enabled) return;
+  tv.launchDeadline = millis() + WAKE_LAUNCH_WINDOW_MS;
+  if (!(tv.registered && tv.power == "Active")) wakeOnLan(tv);
+}
+
+// ------------------------------------------------------- TV message handling
+
+static void setForeground(Tv& tv, const String& app) {
+  if (app == tv.fgApp) return;
+  tv.fgApp = app;
+  tv.idleSince = isIdleApp(app) ? millis() : 0;
+  LOG(tv, "foreground app: %s%s", app.length() ? app.c_str() : "(none)",
+      tv.idleSince ? "  [idle]" : "");
+}
+
+static void onMessage(Tv& tv, const uint8_t* data, size_t len) {
+  JsonDocument doc;
+  if (deserializeJson(doc, (const char*)data, len)) {
+    LOG(tv, "unreadable message from TV");
+    return;
+  }
+  const char* type = doc["type"] | "";
+  const char* id = doc["id"] | "";
+  JsonObjectConst pl = doc["payload"].as<JsonObjectConst>();
+
+  if (!strcmp(type, "registered")) {
+    const char* k = pl["client-key"] | "";
+    if (*k && tv.key != k) {
+      tv.key = k;
+      saveKey(tv);
+      LOG(tv, "paired - client key saved: %s", k);
+    }
+    tv.registered = true;
+    LOG(tv, "connected and authorised");
+    JsonDocument sub;
+    sub["subscribe"] = true;
+    ssap(tv, "subscribe", "fg", "ssap://com.webos.applicationManager/getForegroundAppInfo");
+    ssap(tv, "subscribe", "pwr", "ssap://com.webos.service.tvpower/power/getPowerState",
+         sub.as<JsonObjectConst>());
+    ssap(tv, "request", "netinfo", "ssap://com.webos.service.connectionmanager/getinfo");
+    return;
+  }
+
+  if (!strcmp(type, "response") && !strcmp(id, "register_0")) {
+    if (!strcmp(pl["pairingType"] | "", "PROMPT"))
+      LOG(tv, ">>> accept the connection prompt on the TV with the remote <<<");
+    return;
+  }
+
+  if (!strcmp(type, "error")) {
+    LOG(tv, "TV error on '%s': %s", id, doc["error"] | "?");
+    return;
+  }
+
+  if (!strcmp(id, "fg")) {
+    setForeground(tv, String(pl["appId"] | ""));
+  } else if (!strcmp(id, "pwr")) {
+    String state = pl["state"] | "";
+    if (state.length() && state != tv.power) {
+      tv.power = state;
+      LOG(tv, "power: %s", state.c_str());
+    }
+  } else if (!strcmp(id, "netinfo")) {
+    // Printed once so you can copy the TV's MAC address into config.h
+    Serial.printf("[%s] network info: ", tv.cfg->name);
+    serializeJson(pl, Serial);
+    Serial.println();
+  } else if (!strcmp(id, "launch")) {
+    if (!(pl["returnValue"] | false)) LOG(tv, "TV refused to open the dashboard");
+  }
+}
+
+static void onWsEvent(Tv& tv, WStype_t type, uint8_t* payload, size_t length) {
+  switch (type) {
+    case WStype_CONNECTED:
+      tv.connected = true;
+      LOG(tv, "socket open, registering...");
+      sendRegister(tv);
+      break;
+    case WStype_DISCONNECTED:
+      if (tv.connected) LOG(tv, "disconnected (TV off or unreachable)");
+      tv.connected = tv.registered = false;
+      tv.fgApp = "";
+      tv.power = "";
+      tv.idleSince = 0;
+      break;
+    case WStype_TEXT:
+      onMessage(tv, payload, length);
+      break;
+    default:
+      break;
+  }
+}
+
+// --------------------------------------------------------------- the rules
+
+static void checkTv(Tv& tv) {
+  if (!tv.registered) return;
+  bool screenOn = tv.power == "Active";
+  uint32_t now = millis();
+
+  // After a scheduled wake: show the dashboard as soon as the TV is up.
+  if (tv.launchDeadline) {
+    if ((int32_t)(now - tv.launchDeadline) > 0) {
+      tv.launchDeadline = 0;
+    } else if (screenOn && tv.fgApp.length()) {
+      tv.launchDeadline = 0;
+      launchDashboard(tv);
+      return;
+    }
+  }
+
+  // Idle long enough on the home screen / screensaver: take over.
+  if (screenOn && tv.idleSince && now - tv.idleSince >= IDLE_MS && withinTakeoverHours()) {
+    launchDashboard(tv);
+    tv.idleSince = now;  // if it didn't work, try again after another idle period
+  }
+}
+
+static void checkSchedule() {
+  static int lastMinute = -1;
+  struct tm t;
+  if (!getLocalTime(&t, 0) || t.tm_min == lastMinute) return;
+  lastMinute = t.tm_min;
+  for (const WakeTime& w : WAKE_SCHEDULE) {
+    if (w.tv < 0 || w.tv >= (int)NUM_TVS) continue;
+    if (w.hour == t.tm_hour && w.minute == t.tm_min) {
+      LOG(tvs[w.tv], "scheduled wake");
+      wakeAndShow(tvs[w.tv]);
+    }
+  }
+}
+
+// ---------------------------------------------------------------- web pages
+
+static Tv* tvFromArg() {
+  int i = server.arg("tv").toInt();
+  if (i < 0 || i >= (int)NUM_TVS || !tvs[i].enabled) return nullptr;
+  return &tvs[i];
+}
+
+static void setupWeb() {
+  server.on("/", []() { server.send(200, "text/html", PAGE_HTML); });
+
+  server.on("/status", []() {
+    JsonDocument doc;
+    JsonArray arr = doc.to<JsonArray>();
+    for (Tv& tv : tvs) {
+      JsonObject o = arr.add<JsonObject>();
+      o["name"] = tv.cfg->name;
+      o["ip"] = tv.cfg->ip;
+      o["enabled"] = tv.enabled;
+      o["connected"] = tv.registered;
+      o["power"] = tv.power;
+      o["foreground"] = tv.fgApp;
+      o["idleSeconds"] = tv.idleSince ? (millis() - tv.idleSince) / 1000 : 0;
+    }
+    String s;
+    serializeJsonPretty(doc, s);
+    server.send(200, "application/json", s);
+  });
+
+  server.on("/launch", []() {
+    Tv* tv = tvFromArg();
+    if (!tv || !tv->registered) return server.send(409, "text/plain", "TV not connected");
+    launchDashboard(*tv);
+    server.send(200, "text/plain", "ok");
+  });
+
+  server.on("/wake", []() {
+    Tv* tv = tvFromArg();
+    if (!tv) return server.send(404, "text/plain", "no such TV");
+    wakeAndShow(*tv);
+    server.send(200, "text/plain", "ok");
+  });
+
+  server.begin();
+}
+
+// ------------------------------------------------------------- setup / loop
+
+void setup() {
+  Serial.begin(115200);
+  delay(300);
+  Serial.println("\nFamily Hub controller starting");
+
+  prefs.begin("tvs", false);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.setHostname("family-hub");
+  WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  Serial.printf("Connecting to Wi-Fi '%s'", WIFI_SSID);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print('.');
+  }
+  Serial.printf("\nWi-Fi connected. ESP32 address: %s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("Dashboard: %s   Status: %sstatus\n", dashboardUrl().c_str(), dashboardUrl().c_str());
+
+  configTzTime(TZ_INFO, "pool.ntp.org", "time.google.com");
+  setupWeb();
+
+  for (size_t i = 0; i < NUM_TVS; i++) {
+    Tv& tv = tvs[i];
+    tv.cfg = &TV_CONFIG[i];
+    tv.index = i;
+    tv.enabled = tv.cfg->ip && *tv.cfg->ip;
+    if (!tv.enabled) {
+      LOG(tv, "no IP set - skipped");
+      continue;
+    }
+    tv.key = loadKey(i);
+    if (!tv.key.length()) tv.key = tv.cfg->clientKey;
+    tv.ws.onEvent([&tv](WStype_t type, uint8_t* payload, size_t length) {
+      onWsEvent(tv, type, payload, length);
+    });
+    tv.ws.setReconnectInterval(10000);
+    tv.ws.enableHeartbeat(30000, 10000, 3);
+    // The TV uses a self-signed certificate on the local network: with no
+    // fingerprint the library connects without verifying it. The empty
+    // protocol stops it sending a WebSocket sub-protocol the TV doesn't know.
+    tv.ws.beginSSL(tv.cfg->ip, 3001, "/", "", "");
+    LOG(tv, "connecting to %s%s", tv.cfg->ip, tv.key.length() ? "" : " (will ask to pair)");
+  }
+}
+
+void loop() {
+  server.handleClient();
+  for (Tv& tv : tvs) {
+    if (tv.enabled) tv.ws.loop();
+  }
+
+  static uint32_t lastCheck = 0;
+  if (millis() - lastCheck >= 1000) {
+    lastCheck = millis();
+    for (Tv& tv : tvs) {
+      if (tv.enabled) checkTv(tv);
+    }
+    checkSchedule();
+  }
+}
