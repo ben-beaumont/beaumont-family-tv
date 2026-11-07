@@ -119,7 +119,13 @@ struct Tv {
   uint32_t idleSince = 0;  // millis() when it went idle; 0 = not idle
   uint32_t launchDeadline = 0;  // after a scheduled wake: show the dashboard until this time
 
-  WebSocketsClient wsPtr;       // second connection: the TV's pointer-input socket
+  // Second connection: the TV's pointer-input socket, used only for the
+  // screensaver keep-alive. Opened lazily (only while this TV is actually
+  // showing the dashboard) and closed again afterwards - with two TVs,
+  // keeping it open for both all the time was enough concurrent TLS
+  // sessions to exhaust the ESP32's heap and start failing handshakes.
+  WebSocketsClient wsPtr;
+  bool pointerRequested = false;
   bool pointerConnected = false;
   uint32_t lastKeepAlive = 0;
 };
@@ -318,7 +324,6 @@ static void onMessage(Tv& tv, const uint8_t* data, size_t len) {
     ssap(tv, "subscribe", "pwr", "ssap://com.webos.service.tvpower/power/getPowerState",
          sub.as<JsonObjectConst>());
     ssap(tv, "request", "netinfo", "ssap://com.webos.service.connectionmanager/getinfo");
-    ssap(tv, "request", "ptr", "ssap://com.webos.service.networkinput/getPointerInputSocket");
     return;
   }
 
@@ -390,12 +395,23 @@ static void checkTv(Tv& tv) {
 
   // While our own dashboard is on screen, nudge the TV's pointer input so it
   // sees "real" activity and doesn't let its own screensaver take over.
-  if (tv.pointerConnected && tv.fgApp == DASHBOARD_APP_ID &&
-      now - tv.lastKeepAlive >= POINTER_KEEPALIVE_MS) {
-    tv.wsPtr.sendTXT("type:move\ndx:1\ndy:0\ndown:0\n\n");
-    tv.wsPtr.sendTXT("type:move\ndx:-1\ndy:0\ndown:0\n\n");
-    tv.lastKeepAlive = now;
-    LOG(tv, "pointer keep-alive sent");
+  // The pointer socket is only opened for as long as that's actually true.
+  if (tv.fgApp == DASHBOARD_APP_ID) {
+    if (!tv.pointerConnected && !tv.pointerRequested) {
+      tv.pointerRequested = true;
+      ssap(tv, "request", "ptr", "ssap://com.webos.service.networkinput/getPointerInputSocket");
+    }
+    if (tv.pointerConnected && now - tv.lastKeepAlive >= POINTER_KEEPALIVE_MS) {
+      tv.wsPtr.sendTXT("type:move\ndx:1\ndy:0\ndown:0\n\n");
+      tv.wsPtr.sendTXT("type:move\ndx:-1\ndy:0\ndown:0\n\n");
+      tv.lastKeepAlive = now;
+      LOG(tv, "pointer keep-alive sent");
+    }
+  } else if (tv.pointerConnected || tv.pointerRequested) {
+    tv.wsPtr.disconnect();
+    tv.pointerConnected = false;
+    tv.pointerRequested = false;
+    LOG(tv, "pointer socket closed");
   }
 
   // After a scheduled wake: show the dashboard as soon as the TV is up.
