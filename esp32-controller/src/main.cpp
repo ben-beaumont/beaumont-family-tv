@@ -144,6 +144,15 @@ static bool isIdleApp(const String& app) {
   return false;
 }
 
+// A TV counts as idle either because its foreground app is one of
+// IDLE_APPS (home screen etc.), or because webOS has already decided to
+// show its own screensaver - which reports as power state "Screen Saver",
+// not as any particular foreground app (the last real app, e.g. a
+// streaming app, stays "foreground" underneath it).
+static bool isIdle(const Tv& tv) {
+  return isIdleApp(tv.fgApp) || tv.power == "Screen Saver";
+}
+
 static bool withinTakeoverHours() {
   struct tm t;
   if (!getLocalTime(&t, 0)) return true;  // no clock yet: don't block
@@ -268,10 +277,18 @@ static void wakeAndShow(Tv& tv) {
 
 // ------------------------------------------------------- TV message handling
 
+// Recomputes idleSince from the current foreground app + power state.
+// Called whenever either one changes.
+static void updateIdleState(Tv& tv) {
+  bool idle = isIdle(tv);
+  if (idle && !tv.idleSince) tv.idleSince = millis();
+  if (!idle) tv.idleSince = 0;
+}
+
 static void setForeground(Tv& tv, const String& app) {
   if (app == tv.fgApp) return;
   tv.fgApp = app;
-  tv.idleSince = isIdleApp(app) ? millis() : 0;
+  updateIdleState(tv);
   LOG(tv, "foreground app: %s%s", app.length() ? app.c_str() : "(none)",
       tv.idleSince ? "  [idle]" : "");
 }
@@ -323,6 +340,7 @@ static void onMessage(Tv& tv, const uint8_t* data, size_t len) {
     if (state.length() && state != tv.power) {
       tv.power = state;
       LOG(tv, "power: %s", state.c_str());
+      updateIdleState(tv);
     }
   } else if (!strcmp(id, "netinfo")) {
     // Printed once so you can copy the TV's MAC address into config.h
@@ -363,7 +381,11 @@ static void onWsEvent(Tv& tv, WStype_t type, uint8_t* payload, size_t length) {
 
 static void checkTv(Tv& tv) {
   if (!tv.registered) return;
-  bool screenOn = tv.power == "Active";
+  // "Screen Saver" means webOS's own screensaver is already showing - the
+  // panel is lit, just not on anything useful, so it still counts as a
+  // screen we can take over (and should: launching our dashboard is what
+  // dismisses it).
+  bool screenOn = tv.power == "Active" || tv.power == "Screen Saver";
   uint32_t now = millis();
 
   // While our own dashboard is on screen, nudge the TV's pointer input so it
