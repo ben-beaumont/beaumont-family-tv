@@ -133,16 +133,23 @@ function parseRrule(s) {
 
 var WEEKDAY_CODES = ['SU','MO','TU','WE','TH','FR','SA'];
 
-// Occurrence starts for one VEVENT within [windowStart, windowEnd].
+// Occurrence starts for one VEVENT within [windowStart, windowEnd]. An
+// occurrence counts as "in" the window if it overlaps it at all - e.g. an
+// event that started before windowStart but hasn't ended yet (a class
+// that's on right now) still belongs on today's list.
 function occurrencesInWindow(ev, windowStart, windowEnd) {
   if (!ev.DTSTART) return [];
   var start = ev.DTSTART.date;
+  // An all-day event with no DTEND spans its whole start day (RFC 5545
+  // default duration), not just the midnight instant DTSTART parses to.
+  var duration = ev.DTEND ? (ev.DTEND.date - start) :
+    (ev.DTSTART.allDay ? 86400000 : 0);
+  function overlapsWindow(occStart) {
+    var occEnd = new Date(occStart.getTime() + duration);
+    return occStart <= windowEnd && occEnd >= windowStart;
+  }
   if (!ev.RRULE) {
-    // An all-day event with no DTEND spans its whole start day (RFC 5545
-    // default duration), not just the midnight instant DTSTART parses to.
-    var effectiveEnd = ev.DTEND ? ev.DTEND.date :
-      (ev.DTSTART.allDay ? new Date(start.getTime() + 86400000) : start);
-    return (start <= windowEnd && effectiveEnd >= windowStart) ? [start] : [];
+    return overlapsWindow(start) ? [{ start: start, end: new Date(start.getTime() + duration) }] : [];
   }
   var rule = parseRrule(ev.RRULE);
   var freq = rule.FREQ;
@@ -166,7 +173,9 @@ function occurrencesInWindow(ev, windowStart, windowEnd) {
     }
     if (isOccurrence) {
       n++;
-      if (cur >= windowStart && cur <= windowEnd) result.push(new Date(cur.getTime()));
+      if (overlapsWindow(cur)) {
+        result.push({ start: new Date(cur.getTime()), end: new Date(cur.getTime() + duration) });
+      }
       if (cur > windowEnd) break;
     }
 
@@ -201,18 +210,22 @@ function buildAgenda(icsText, windowStart, windowEnd) {
   var occ = [];
   events.forEach(function (ev) {
     if (ev.STATUS === 'CANCELLED') return;
-    occurrencesInWindow(ev, windowStart, windowEnd).forEach(function (date) {
-      if (ev.UID && overridden[ev.UID + ':' + date.getTime()]) return;
-      occ.push({ start: date, allDay: ev.DTSTART.allDay, summary: ev.summary || '(untitled)' });
+    occurrencesInWindow(ev, windowStart, windowEnd).forEach(function (o) {
+      if (ev.UID && overridden[ev.UID + ':' + o.start.getTime()]) return;
+      occ.push({ start: o.start, end: o.end, allDay: ev.DTSTART.allDay, summary: ev.summary || '(untitled)' });
     });
   });
   occ.sort(function (a, b) { return a.start - b.start; });
   return occ;
 }
 
-function dayLabel(date, today) {
-  var diffDays = Math.round((new Date(date.getFullYear(), date.getMonth(), date.getDate()) -
+function dayDiff(date, today) {
+  return Math.round((new Date(date.getFullYear(), date.getMonth(), date.getDate()) -
     new Date(today.getFullYear(), today.getMonth(), today.getDate())) / 86400000);
+}
+
+function dayLabel(date, today) {
+  var diffDays = dayDiff(date, today);
   if (diffDays === 0) return 'Today';
   if (diffDays === 1) return 'Tomorrow';
   return DAYS[date.getDay()] + ' ' + date.getDate() + ' ' + MONTHS[date.getMonth()];
@@ -234,9 +247,13 @@ function appendEventRow(container, e) {
 
 function renderToday(occ) {
   var today = new Date();
+  var startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  var startOfTomorrow = new Date(startOfToday.getTime() + 86400000);
   var body = todayView.querySelector('.body');
   body.innerHTML = '';
-  var mine = occ.filter(function (e) { return dayLabel(e.start, today) === 'Today'; });
+  // Overlap, not same start day - a multi-day event that started earlier
+  // still belongs on today's list for as long as it's still running.
+  var mine = occ.filter(function (e) { return e.start < startOfTomorrow && e.end > startOfToday; });
   if (!mine.length) {
     body.innerHTML = '<div class="empty">Nothing on today</div>';
     return;
@@ -248,7 +265,9 @@ function renderUpcoming(occ) {
   var today = new Date();
   var body = upcomingView.querySelector('.body');
   body.innerHTML = '';
-  var rest = occ.filter(function (e) { return dayLabel(e.start, today) !== 'Today'; });
+  // Only events that start on a later day - today's (possibly multi-day)
+  // events are already covered by the Today view.
+  var rest = occ.filter(function (e) { return dayDiff(e.start, today) >= 1; });
   if (!rest.length) {
     body.innerHTML = '<div class="empty">Nothing coming up this week</div>';
     return;
@@ -292,8 +311,9 @@ function refreshCalendar() {
     return r.text();
   }).then(function (text) {
     var now = new Date();
-    var weekAhead = new Date(now.getTime() + 7 * 86400000);
-    lastAgenda = buildAgenda(text, now, weekAhead);
+    var startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var weekAhead = new Date(startOfToday.getTime() + 7 * 86400000);
+    lastAgenda = buildAgenda(text, startOfToday, weekAhead);
   }).catch(function () { lastAgenda = []; })
     .then(function () { showView(forcedView || VIEW_ORDER[viewIndex]); });
 }
