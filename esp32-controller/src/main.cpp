@@ -12,6 +12,8 @@
 //   /status           JSON: what each TV is doing
 //   /launch?tv=N      show the dashboard on TV N now
 //   /wake?tv=N        wake TV N and show the dashboard
+//   /calendar.ics     cached copy of the calendar feed, for the dashboard page
+//   /calendar/refresh re-fetch the calendar feed now
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -20,10 +22,63 @@
 #include <Preferences.h>
 #include <ArduinoJson.h>
 #include <WebSocketsClient.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <time.h>
 
 #include "config.h"
 #include "page.h"
+
+// Google Trust Services' root CA (self-signed, valid to 2036), used to
+// verify the HTTPS connection when fetching the calendar feed. Pinning one
+// root keeps this lighter than embedding a full CA bundle.
+static const char GOOGLE_ROOT_CA[] =
+"-----BEGIN CERTIFICATE-----\n"
+"MIICCTCCAY6gAwIBAgINAgPlwGjvYxqccpBQUjAKBggqhkjOPQQDAzBHMQswCQYD\n"
+"VQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2VzIExMQzEUMBIG\n"
+"A1UEAxMLR1RTIFJvb3QgUjQwHhcNMTYwNjIyMDAwMDAwWhcNMzYwNjIyMDAwMDAw\n"
+"WjBHMQswCQYDVQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2Vz\n"
+"IExMQzEUMBIGA1UEAxMLR1RTIFJvb3QgUjQwdjAQBgcqhkjOPQIBBgUrgQQAIgNi\n"
+"AATzdHOnaItgrkO4NcWBMHtLSZ37wWHO5t5GvWvVYRg1rkDdc/eJkTBa6zzuhXyi\n"
+"QHY7qca4R9gq55KRanPpsXI5nymfopjTX15YhmUPoYRlBtHci8nHc8iMai/lxKvR\n"
+"HYqjQjBAMA4GA1UdDwEB/wQEAwIBhjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQW\n"
+"BBSATNbrdP9JNqPV2Py1PsVq8JQdjDAKBggqhkjOPQQDAwNpADBmAjEA6ED/g94D\n"
+"9J+uHXqnLrmvT/aDHQ4thQEd0dlq7A/Cr8deVl5c1RxYIigL9zC2L7F8AjEA8GE8\n"
+"p/SgguMh1YQdc4acLa/KNJvxn7kjNuK8YAOdgLOaVsjh4rsUecrNIdSUtUlD\n"
+"-----END CERTIFICATE-----\n";
+
+static const size_t CALENDAR_MAX_BYTES = 300000;  // guard against an unexpectedly huge feed
+static String calendarIcs;
+static uint32_t calendarFetchedAt = 0;  // millis() of last successful fetch; 0 = never
+
+static void fetchCalendar() {
+  if (!strlen(CALENDAR_ICS_URL)) return;
+  WiFiClientSecure client;
+  client.setCACert(GOOGLE_ROOT_CA);
+  HTTPClient https;
+  https.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  https.setTimeout(15000);
+  if (!https.begin(client, CALENDAR_ICS_URL)) {
+    Serial.println("[calendar] couldn't start request");
+    return;
+  }
+  int code = https.GET();
+  if (code != HTTP_CODE_OK) {
+    Serial.printf("[calendar] fetch failed: HTTP %d\n", code);
+    https.end();
+    return;
+  }
+  int len = https.getSize();
+  if (len > (int)CALENDAR_MAX_BYTES) {
+    Serial.printf("[calendar] feed too big (%d bytes) - skipped\n", len);
+    https.end();
+    return;
+  }
+  calendarIcs = https.getString();
+  calendarFetchedAt = millis();
+  Serial.printf("[calendar] fetched %u bytes\n", (unsigned)calendarIcs.length());
+  https.end();
+}
 
 // Permissions requested when pairing. Same list as the Python script, so the
 // client key it got from the lounge TV works here too.
@@ -396,6 +451,16 @@ static void setupWeb() {
     server.send(200, "text/plain", "ok");
   });
 
+  server.on("/calendar.ics", []() {
+    if (!calendarFetchedAt) return server.send(503, "text/plain", "calendar not fetched yet");
+    server.send(200, "text/calendar", calendarIcs);
+  });
+
+  server.on("/calendar/refresh", []() {
+    fetchCalendar();
+    server.send(200, "text/plain", calendarFetchedAt ? "ok" : "fetch failed - see serial log");
+  });
+
   server.begin();
 }
 
@@ -423,6 +488,7 @@ void setup() {
 
   configTzTime(TZ_INFO, "pool.ntp.org", "time.google.com");
   setupWeb();
+  fetchCalendar();
 
   for (size_t i = 0; i < NUM_TVS; i++) {
     Tv& tv = tvs[i];
@@ -474,5 +540,12 @@ void loop() {
       if (tv.enabled) checkTv(tv);
     }
     checkSchedule();
+  }
+
+  static uint32_t lastCalendarFetch = 0;
+  uint32_t calendarIntervalMs = (uint32_t)CALENDAR_REFRESH_MINUTES * 60 * 1000;
+  if (strlen(CALENDAR_ICS_URL) && millis() - lastCalendarFetch >= calendarIntervalMs) {
+    lastCalendarFetch = millis();
+    fetchCalendar();
   }
 }

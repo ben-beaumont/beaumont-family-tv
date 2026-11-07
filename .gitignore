@@ -5,3 +5,4 @@ esp32-controller/include/config.h
 .pio/
 .vscode/
 __pycache__/
+.claude/

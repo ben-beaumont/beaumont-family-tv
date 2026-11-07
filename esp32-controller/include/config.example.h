@@ -35,3 +35,11 @@ static const WakeTime WAKE_SCHEDULE[] = {
 
 // ---- Time ----------------------------------------------------------------
 #define TZ_INFO "GMT0BST,M3.5.0/1,M10.5.0"   // UK time with daylight saving
+
+// ---- Calendar --------------------------------------------------------------
+// A private calendar's "Secret address in iCal format" (Google Calendar ->
+// Settings -> this calendar, under "Integrate calendar"). Leave blank to
+// disable. Treat this like a password: anyone with the URL can read the
+// calendar, which is why it lives here and not in the repo.
+#define CALENDAR_ICS_URL ""
+#define CALENDAR_REFRESH_MINUTES 15

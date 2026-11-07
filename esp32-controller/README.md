@@ -45,6 +45,24 @@ clock served by the ESP32 itself, which is safe for OLED screens.
 3. Set the times in `WAKE_SCHEDULE`. Test with `http://<esp32 address>/wake?tv=1`
    while the TV is off.
 
+## Calendar
+
+The dashboard page rotates between the clock and an upcoming-events agenda
+built from one calendar feed, every 20 seconds.
+
+1. In Google Calendar: Settings -> pick the calendar -> "Integrate calendar"
+   -> copy "Secret address in iCal format".
+2. Paste it into `CALENDAR_ICS_URL` in `config.h`. Treat it like a password -
+   anyone with that URL can read the calendar.
+3. The ESP32 re-fetches it every `CALENDAR_REFRESH_MINUTES` (default 15); the
+   TV page re-reads the ESP32's cached copy every 5 minutes. To force a fetch
+   without waiting, open `http://<esp32 address>/calendar/refresh`.
+
+Known limits of the built-in parser: recurring events only handle plain
+daily/weekly/monthly/yearly rules and simple weekly `BYDAY` lists (no "2nd
+Tuesday of the month" style rules), and event times are read as local time
+unless they're explicitly UTC.
+
 ## Settings in config.h
 
 | Setting | Meaning |
@@ -53,3 +71,5 @@ clock served by the ESP32 itself, which is safe for OLED screens.
 | `IDLE_MINUTES` | How long idle before taking over (default 5) |
 | `TAKEOVER_START_HOUR` / `END_HOUR` | Only take over between these hours |
 | `WAKE_SCHEDULE` | Which TV to wake, and when |
+| `CALENDAR_ICS_URL` | Secret iCal feed URL for the agenda view |
+| `CALENDAR_REFRESH_MINUTES` | How often the ESP32 re-fetches the calendar |
