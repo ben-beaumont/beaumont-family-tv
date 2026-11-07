@@ -65,6 +65,13 @@ if (tvIndex !== null) {
   document.addEventListener('keydown', function () {
     fetch('/home?tv=' + tvIndex).catch(function () {});
   });
+
+  // Lets the ESP32 tell this page is genuinely still loaded even when the
+  // TV's own "what app is in front" API doesn't notice it's gone (seen
+  // after exiting the system browser via the remote's Back button).
+  var sendHeartbeat = function () { fetch('/heartbeat?tv=' + tvIndex).catch(function () {}); };
+  sendHeartbeat();
+  setInterval(sendHeartbeat, 20000);
 }
 
 function drift() {

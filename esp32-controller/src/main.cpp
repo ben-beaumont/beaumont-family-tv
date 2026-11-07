@@ -14,6 +14,8 @@
 //   /wake?tv=N        wake TV N and show the dashboard
 //   /home?tv=N        send TV N back to its own home screen (dashboard calls
 //                     this itself on any remote keypress)
+//   /heartbeat?tv=N   dashboard page pings this while it's actually loaded,
+//                     so we can tell when it's gone even if the TV won't say
 //   /calendar.ics     cached copy of the calendar feed, for the dashboard page
 //   /calendar/refresh re-fetch the calendar feed now
 
@@ -115,6 +117,14 @@ static const uint32_t POINTER_KEEPALIVE_MS = 30UL * 1000;
 // quickly instead of silently breaking idle detection.
 static const uint32_t FG_POLL_MS = 5UL * 1000;
 
+// Belt and braces for the same problem: webOS's own getForegroundAppInfo
+// can itself keep reporting "browser" after a Back-button exit, not just
+// its push subscription - re-asking doesn't help when the TV's answer is
+// simply wrong. The dashboard page pings /heartbeat every 20s while it's
+// genuinely loaded; if those stop arriving while fgApp still claims it's
+// up, we stop trusting that claim regardless of what the TV says.
+static const uint32_t HEARTBEAT_TIMEOUT_MS = 60UL * 1000;
+
 struct Tv {
   const TvConfig* cfg = nullptr;
   int index = 0;
@@ -128,6 +138,7 @@ struct Tv {
   uint32_t idleSince = 0;  // millis() when it went idle; 0 = not idle
   uint32_t launchDeadline = 0;  // after a scheduled wake: show the dashboard until this time
   uint32_t lastFgPoll = 0;  // last time we actively re-checked the foreground app
+  uint32_t lastHeartbeat = 0;  // last /heartbeat ping received from the dashboard page
 
   // Second connection: the TV's pointer-input socket, used only for the
   // screensaver keep-alive. Opened lazily (only while this TV is actually
@@ -160,13 +171,22 @@ static bool isIdleApp(const String& app) {
   return false;
 }
 
-// A TV counts as idle either because its foreground app is one of
-// IDLE_APPS (home screen etc.), or because webOS has already decided to
-// show its own screensaver - which reports as power state "Screen Saver",
-// not as any particular foreground app (the last real app, e.g. a
-// streaming app, stays "foreground" underneath it).
+// Whether we have genuine recent confirmation (a heartbeat ping from the
+// page itself) that the dashboard is actually loaded and running, rather
+// than just taking the TV's word for it - see HEARTBEAT_TIMEOUT_MS.
+static bool isDashboardAlive(const Tv& tv) {
+  return tv.fgApp == DASHBOARD_APP_ID && millis() - tv.lastHeartbeat < HEARTBEAT_TIMEOUT_MS;
+}
+
+// A TV counts as idle because its foreground app is one of IDLE_APPS (home
+// screen etc.), because webOS has already decided to show its own
+// screensaver (power state "Screen Saver", not any particular foreground
+// app), or because it's supposedly showing our dashboard but hasn't proven
+// that with a heartbeat in a while - most likely the user navigated away
+// and the TV just hasn't told us.
 static bool isIdle(const Tv& tv) {
-  return isIdleApp(tv.fgApp) || tv.power == "Screen Saver";
+  return isIdleApp(tv.fgApp) || tv.power == "Screen Saver" ||
+         (tv.fgApp == DASHBOARD_APP_ID && !isDashboardAlive(tv));
 }
 
 static bool withinTakeoverHours() {
@@ -226,6 +246,9 @@ static void launchDashboard(Tv& tv) {
   JsonDocument pl;
   pl["target"] = url;
   ssap(tv, "request", "launch", "ssap://system.launcher/open", pl.as<JsonObjectConst>());
+  // Optimistic starting point so isDashboardAlive() has a grace period for
+  // the page to actually load and send its first real heartbeat.
+  tv.lastHeartbeat = millis();
   LOG(tv, "showing dashboard %s", url.c_str());
 }
 
@@ -419,10 +442,15 @@ static void checkTv(Tv& tv) {
     ssap(tv, "request", "fgpoll", "ssap://com.webos.applicationManager/getForegroundAppInfo");
   }
 
+  // Re-evaluate every tick, not just on fg/power change events, so a
+  // heartbeat timing out (a time-based condition) starts the idle clock
+  // even without any new message from the TV.
+  updateIdleState(tv);
+
   // While our own dashboard is on screen, nudge the TV's pointer input so it
   // sees "real" activity and doesn't let its own screensaver take over.
   // The pointer socket is only opened for as long as that's actually true.
-  if (tv.fgApp == DASHBOARD_APP_ID) {
+  if (isDashboardAlive(tv)) {
     if (!tv.pointerConnected && !tv.pointerRequested) {
       tv.pointerRequested = true;
       ssap(tv, "request", "ptr", "ssap://com.webos.service.networkinput/getPointerInputSocket");
@@ -495,6 +523,7 @@ static void setupWeb() {
       o["power"] = tv.power;
       o["foreground"] = tv.fgApp;
       o["idleSeconds"] = tv.idleSince ? (millis() - tv.idleSince) / 1000 : 0;
+      if (tv.fgApp == DASHBOARD_APP_ID) o["dashboardAlive"] = isDashboardAlive(tv);
     }
     String s;
     serializeJsonPretty(doc, s);
@@ -519,6 +548,15 @@ static void setupWeb() {
     Tv* tv = tvFromArg();
     if (!tv || !tv->registered) return server.send(409, "text/plain", "TV not connected");
     sendToHome(*tv);
+    server.send(200, "text/plain", "ok");
+  });
+
+  // Pinged by the dashboard page itself while it's actually loaded - see
+  // isDashboardAlive(). No-op if the tv arg doesn't resolve; the page
+  // can't do anything useful with an error here anyway.
+  server.on("/heartbeat", []() {
+    Tv* tv = tvFromArg();
+    if (tv) tv->lastHeartbeat = millis();
     server.send(200, "text/plain", "ok");
   });
 
