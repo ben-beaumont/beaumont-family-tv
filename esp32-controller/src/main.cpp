@@ -8,10 +8,12 @@
 // - Serves the stand-in dashboard and a status page itself
 //
 // Web endpoints on the ESP32:
-//   /                 the dashboard page (dark clock for now)
+//   /                 the dashboard page (today + upcoming calendar)
 //   /status           JSON: what each TV is doing
 //   /launch?tv=N      show the dashboard on TV N now
 //   /wake?tv=N        wake TV N and show the dashboard
+//   /home?tv=N        send TV N back to its own home screen (dashboard calls
+//                     this itself on any remote keypress)
 //   /calendar.ics     cached copy of the calendar feed, for the dashboard page
 //   /calendar/refresh re-fetch the calendar feed now
 
@@ -212,10 +214,21 @@ static void sendRegister(Tv& tv) {
 }
 
 static void launchDashboard(Tv& tv) {
+  String url = dashboardUrl() + "?tv=" + tv.index;
   JsonDocument pl;
-  pl["target"] = dashboardUrl();
+  pl["target"] = url;
   ssap(tv, "request", "launch", "ssap://system.launcher/open", pl.as<JsonObjectConst>());
-  LOG(tv, "showing dashboard %s", dashboardUrl().c_str());
+  LOG(tv, "showing dashboard %s", url.c_str());
+}
+
+// Sends the TV back to its own home screen - used when the dashboard page
+// sees a remote keypress, so any button (other than power, which never
+// reaches a web page) dismisses it like a screensaver would.
+static void sendToHome(Tv& tv) {
+  JsonDocument pl;
+  pl["id"] = "com.webos.app.home";
+  ssap(tv, "request", "home", "ssap://system.launcher/launch", pl.as<JsonObjectConst>());
+  LOG(tv, "dismissed to home screen");
 }
 
 // Splits a "wss://host:port/path" URL as returned by getPointerInputSocket.
@@ -486,6 +499,13 @@ static void setupWeb() {
     Tv* tv = tvFromArg();
     if (!tv) return server.send(404, "text/plain", "no such TV");
     wakeAndShow(*tv);
+    server.send(200, "text/plain", "ok");
+  });
+
+  server.on("/home", []() {
+    Tv* tv = tvFromArg();
+    if (!tv || !tv->registered) return server.send(409, "text/plain", "TV not connected");
+    sendToHome(*tv);
     server.send(200, "text/plain", "ok");
   });
 

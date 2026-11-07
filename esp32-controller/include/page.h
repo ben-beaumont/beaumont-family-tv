@@ -57,6 +57,16 @@ var DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturda
 var MONTHS = ['January','February','March','April','May','June','July','August',
   'September','October','November','December'];
 
+// Any remote keypress dismisses the dashboard back to the TV's home screen,
+// like a screensaver would. The physical power button never reaches a web
+// page as a DOM event, so there's nothing to special-case for it.
+var tvIndex = new URLSearchParams(location.search).get('tv');
+if (tvIndex !== null) {
+  document.addEventListener('keydown', function () {
+    fetch('/home?tv=' + tvIndex).catch(function () {});
+  });
+}
+
 function drift() {
   var x = Math.random() * 16 - 8, y = Math.random() * 16 - 8;
   w.style.transform = 'translate(calc(-50% + ' + x + 'vw),calc(-50% + ' + y + 'vh))';
