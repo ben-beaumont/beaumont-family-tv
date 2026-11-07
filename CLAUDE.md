@@ -34,16 +34,21 @@ go dark at night.
 - `tools/lg_current_app.py` works (Python + `aiowebostv`): found the lounge TV
   and paired. Lounge TV: **192.168.8.248**, name "Lounge TV". Its client key is
   in `esp32-controller/include/config.h` (gitignored). Kitchen TV IP not known yet.
-- `esp32-controller/` is written but **not yet compiled or tested** on hardware.
-  Points to verify first:
-  - Builds under PlatformIO (`esp32dev`, Arduino, WebSockets 2.6.x, ArduinoJson 7).
-  - TLS WebSocket to the TV on port 3001 (self-signed cert; `beginSSL` with an
-    empty fingerprint -> library calls `setInsecure()`).
-  - Pairing reuses the lounge key (same permissions list as aiowebostv).
-  - Which app IDs each TV reports when idle (home screen / screensaver) ->
-    update `IDLE_APPS` in config.h from the serial log.
-  - `ssap://system.launcher/open` with a `target` URL opens the TV browser.
-  - `connectionmanager/getinfo` output, to get each TV's MAC for Wake-on-LAN.
+- `esp32-controller/` builds and runs on hardware. Flashed to the ESP32 on
+  COM3; connects to Wi-Fi, pairs with the lounge TV (reusing the key from
+  the Python script), reports its foreground app and power state, and
+  `/launch?tv=0` successfully opens the stand-in dashboard in the TV's
+  browser (confirmed both in the serial log and on screen).
+- Still to do on the ESP32 side:
+  - Kitchen TV: get its IP, let it pair (accept the prompt on the TV), copy
+    its MAC into `config.h` for Wake-on-LAN.
+  - Confirm the idle-detection app IDs: watch the serial log for the
+    `foreground app:` lines while using each TV normally, and add any app
+    ID shown when idle (home screen / screensaver) to `IDLE_APPS` if it
+    differs from the current guesses.
+  - Let a TV sit idle for `IDLE_MINUTES` to confirm takeover actually
+    triggers (so far only verified via manual `/launch`).
+  - Test scheduled Wake-on-LAN (`/wake?tv=1`) once the kitchen TV's MAC is known.
 - A Pine A64 was tried as the controller and abandoned (power/boot problems).
 
 ## Hardware and environment
@@ -52,8 +57,8 @@ go dark at night.
 - Home network is 192.168.8.x.
 
 ## Next steps
-1. Fill in Wi-Fi details in `config.h`, build and flash the ESP32, get both TVs
-   connected, confirm idle detection and the launch of the stand-in page.
+1. Get the kitchen TV connected (IP, pairing, MAC) and confirm idle detection
+   actually triggers a takeover on both TVs, not just manual `/launch`.
 2. Build the webOS TV app with sample data (map + calendar + rotating views).
 3. Set up Supabase schema and auth.
 4. iPhone app: location, zones, ETA.
