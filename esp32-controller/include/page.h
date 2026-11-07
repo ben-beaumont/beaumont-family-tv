@@ -24,6 +24,18 @@ html,body{margin:0;height:100%;background:#000;color:#7d828c;
 #today .ev .time,#upcoming .ev .time{color:#4a4f58;flex:0 0 auto;width:5.5em}
 #today .ev .summary,#upcoming .ev .summary{overflow:hidden;text-overflow:ellipsis}
 #today .empty,#upcoming .empty{color:#4a4f58}
+#today .allday{margin-bottom:1.6vh}
+#timeline{position:relative;height:68vh;margin-top:.5vh}
+#timeline .hour{position:absolute;left:0;right:0;border-top:1px solid #23262c;height:0}
+#timeline .hour span{position:absolute;top:-1em;left:0;font-size:1.7vh;color:#4a4f58;
+  background:#000;padding-right:.6em}
+#timeline .block{position:absolute;left:4em;right:.3em;box-sizing:border-box;
+  background:#1c1f24;border-left:3px solid #7d828c;border-radius:2px;
+  padding:.15em .7em;overflow:hidden;font-size:2.1vh;color:#c4c8d0}
+#timeline .block .t{font-size:1.5vh;color:#7d828c}
+#timeline .now{position:absolute;left:4em;right:0;border-top:2px solid #b5482f;height:0}
+#timeline .now .label{position:absolute;top:-1em;left:-4em;width:3.6em;text-align:right;
+  font-size:1.7vh;color:#b5482f}
 </style></head>
 <body>
 <div id="w">
@@ -245,6 +257,14 @@ function appendEventRow(container, e) {
   container.appendChild(row);
 }
 
+// Minutes since midnight, clamping anything outside today to today's edges
+// (for events that started yesterday or run past midnight).
+function minutesOfDay(date, startOfToday, startOfTomorrow) {
+  if (date <= startOfToday) return 0;
+  if (date >= startOfTomorrow) return 24 * 60;
+  return date.getHours() * 60 + date.getMinutes();
+}
+
 function renderToday(occ) {
   var today = new Date();
   var startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
@@ -258,7 +278,74 @@ function renderToday(occ) {
     body.innerHTML = '<div class="empty">Nothing on today</div>';
     return;
   }
-  mine.forEach(function (e) { appendEventRow(body, e); });
+
+  var allDay = mine.filter(function (e) { return e.allDay; });
+  var timed = mine.filter(function (e) { return !e.allDay; });
+
+  if (allDay.length) {
+    var adWrap = document.createElement('div');
+    adWrap.className = 'allday';
+    allDay.forEach(function (e) { appendEventRow(adWrap, e); });
+    body.appendChild(adWrap);
+  }
+  if (!timed.length) return;
+
+  // Hour range covers 06:00-23:00 by default, widened to fit any event
+  // that falls outside it.
+  var hourStart = 6, hourEnd = 23;
+  timed.forEach(function (e) {
+    hourStart = Math.min(hourStart, Math.floor(minutesOfDay(e.start, startOfToday, startOfTomorrow) / 60));
+    hourEnd = Math.max(hourEnd, Math.ceil(minutesOfDay(e.end, startOfToday, startOfTomorrow) / 60));
+  });
+  hourEnd = Math.min(hourEnd, 24);
+  var rangeStart = hourStart * 60, rangeLen = (hourEnd - hourStart) * 60;
+
+  var timeline = document.createElement('div');
+  timeline.id = 'timeline';
+  for (var h = hourStart; h <= hourEnd; h++) {
+    var row = document.createElement('div');
+    row.className = 'hour';
+    row.style.top = ((h - hourStart) * 60 / rangeLen * 100) + '%';
+    var label = document.createElement('span');
+    label.textContent = (h % 24) + ':00';
+    row.appendChild(label);
+    timeline.appendChild(row);
+  }
+
+  timed.forEach(function (e) {
+    var startMin = Math.max(rangeStart, minutesOfDay(e.start, startOfToday, startOfTomorrow));
+    var endMin = Math.min(rangeStart + rangeLen, minutesOfDay(e.end, startOfToday, startOfTomorrow));
+    var top = (startMin - rangeStart) / rangeLen * 100;
+    var height = Math.max((endMin - startMin) / rangeLen * 100, 2.5);
+    var block = document.createElement('div');
+    block.className = 'block';
+    block.style.top = top + '%';
+    block.style.height = height + '%';
+    var t = document.createElement('div');
+    t.className = 't';
+    t.textContent = pad(e.start.getHours()) + ':' + pad(e.start.getMinutes());
+    var s = document.createElement('div');
+    s.textContent = e.summary;
+    block.appendChild(t);
+    block.appendChild(s);
+    timeline.appendChild(block);
+  });
+
+  if (today >= startOfToday && today < startOfTomorrow) {
+    var nowMin = today.getHours() * 60 + today.getMinutes();
+    if (nowMin >= rangeStart && nowMin <= rangeStart + rangeLen) {
+      var nowLine = document.createElement('div');
+      nowLine.className = 'now';
+      nowLine.style.top = ((nowMin - rangeStart) / rangeLen * 100) + '%';
+      var nowLabel = document.createElement('div');
+      nowLabel.className = 'label';
+      nowLabel.textContent = pad(today.getHours()) + ':' + pad(today.getMinutes());
+      nowLine.appendChild(nowLabel);
+      timeline.appendChild(nowLine);
+    }
+  }
+
+  body.appendChild(timeline);
 }
 
 function renderUpcoming(occ) {
@@ -320,6 +407,12 @@ function refreshCalendar() {
 refreshCalendar();
 setInterval(refreshCalendar, 5 * 60000);
 if (!forcedView) setInterval(rotateView, 20000);
+
+// Re-render Today on its own, more frequent timer so the "now" line keeps
+// moving without waiting on the next full calendar re-fetch.
+setInterval(function () {
+  if ((forcedView || VIEW_ORDER[viewIndex]) === todayView) renderToday(lastAgenda);
+}, 60000);
 </script>
 </body></html>
 )HTML";
