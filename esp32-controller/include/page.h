@@ -2,8 +2,8 @@
 
 // Stand-in dashboard served by the ESP32 until the real family app exists.
 // Dark and dim for OLED, and it drifts every minute so nothing burns in.
-// Rotates between a Today timeline and an Upcoming list, built from the
-// calendar feed at /calendar.ics (see main.cpp - fetchCalendar()).
+// Shows a Today timeline next to an Upcoming list, built from the calendar
+// feed at /calendar.ics (see main.cpp - fetchCalendar()).
 static const char PAGE_HTML[] = R"HTML(<!doctype html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -11,9 +11,12 @@ static const char PAGE_HTML[] = R"HTML(<!doctype html>
 <style>
 html,body{margin:0;height:100%;background:#000;color:#7d828c;
   font-family:Helvetica,Arial,sans-serif;overflow:hidden;cursor:none}
-#w{position:absolute;left:50%;top:50%;max-width:60vw;text-align:center;
+#w{position:absolute;left:50%;top:50%;max-width:72vw;text-align:center;
   transform:translate(-50%,-50%);transition:transform 3s ease}
-#today,#upcoming{display:none;width:44vw;text-align:left;font-size:2.6vh;line-height:1.6}
+#dashboard{display:flex;gap:4vw}
+#today,#upcoming{text-align:left;font-size:2.6vh;line-height:1.6}
+#today{width:38vw}
+#upcoming{width:24vw}
 #today .heading,#upcoming .heading{color:#a9adb5;font-size:4vh;font-weight:200;margin-bottom:2vh}
 #today .day,#upcoming .day{color:#a9adb5;font-size:3vh;margin-top:2.4vh;font-weight:200}
 #today .day:first-child,#upcoming .day:first-child{margin-top:0}
@@ -39,8 +42,10 @@ html,body{margin:0;height:100%;background:#000;color:#7d828c;
 </style></head>
 <body>
 <div id="w">
-  <div id="today"><div class="heading">Today</div><div class="body"></div></div>
-  <div id="upcoming"><div class="heading">Upcoming</div><div class="body"></div></div>
+  <div id="dashboard">
+    <div id="today"><div class="heading">Today</div><div class="body"></div></div>
+    <div id="upcoming"><div class="heading">Upcoming</div><div class="body"></div></div>
+  </div>
 </div>
 <script>
 var w = document.getElementById('w');
@@ -366,25 +371,11 @@ function renderUpcoming(occ) {
   });
 }
 
-// Rotate today's events -> upcoming events, every 20s. A page opened with
-// ?view=today or ?view=upcoming shows just that view instead, so it can be
-// checked from a laptop browser without waiting on the TV.
-var VIEW_ORDER = [todayView, upcomingView];
-var NAMED_VIEWS = { today: todayView, upcoming: upcomingView };
-var forcedView = NAMED_VIEWS[new URLSearchParams(location.search).get('view')] || null;
-var viewIndex = 0;
-
-function showView(view) {
-  if (view === todayView) renderToday(lastAgenda);
-  if (view === upcomingView) renderUpcoming(lastAgenda);
-  VIEW_ORDER.forEach(function (v) { v.style.display = v === view ? 'block' : 'none'; });
-}
-function rotateView() {
-  viewIndex = (viewIndex + 1) % VIEW_ORDER.length;
-  showView(VIEW_ORDER[viewIndex]);
-}
-
 var lastAgenda = [];
+function renderAll() {
+  renderToday(lastAgenda);
+  renderUpcoming(lastAgenda);
+}
 function refreshCalendar() {
   fetch('/calendar.ics').then(function (r) {
     if (!r.ok) throw new Error('no calendar yet');
@@ -395,17 +386,14 @@ function refreshCalendar() {
     var weekAhead = new Date(startOfToday.getTime() + 7 * 86400000);
     lastAgenda = buildAgenda(text, startOfToday, weekAhead);
   }).catch(function () { lastAgenda = []; })
-    .then(function () { showView(forcedView || VIEW_ORDER[viewIndex]); });
+    .then(renderAll);
 }
 refreshCalendar();
 setInterval(refreshCalendar, 5 * 60000);
-if (!forcedView) setInterval(rotateView, 20000);
 
 // Re-render Today on its own, more frequent timer so the "now" line keeps
 // moving without waiting on the next full calendar re-fetch.
-setInterval(function () {
-  if ((forcedView || VIEW_ORDER[viewIndex]) === todayView) renderToday(lastAgenda);
-}, 60000);
+setInterval(function () { renderToday(lastAgenda); }, 60000);
 </script>
 </body></html>
 )HTML";
