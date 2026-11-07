@@ -2,7 +2,7 @@
 
 // Stand-in dashboard served by the ESP32 until the real family app exists.
 // Dark and dim for OLED, and it drifts every minute so nothing burns in.
-// Rotates between a clock view and an upcoming-events view built from the
+// Rotates between a Today timeline and an Upcoming list, built from the
 // calendar feed at /calendar.ics (see main.cpp - fetchCalendar()).
 static const char PAGE_HTML[] = R"HTML(<!doctype html>
 <html><head><meta charset="utf-8">
@@ -13,9 +13,6 @@ html,body{margin:0;height:100%;background:#000;color:#7d828c;
   font-family:Helvetica,Arial,sans-serif;overflow:hidden;cursor:none}
 #w{position:absolute;left:50%;top:50%;max-width:60vw;text-align:center;
   transform:translate(-50%,-50%);transition:transform 3s ease}
-#clock{font-size:16vh;font-weight:200;color:#a9adb5;letter-spacing:.02em}
-#date{font-size:4vh;margin-top:1vh}
-#sub{font-size:2.4vh;margin-top:6vh;color:#4a4f58}
 #today,#upcoming{display:none;width:44vw;text-align:left;font-size:2.6vh;line-height:1.6}
 #today .heading,#upcoming .heading{color:#a9adb5;font-size:4vh;font-weight:200;margin-bottom:2vh}
 #today .day,#upcoming .day{color:#a9adb5;font-size:3vh;margin-top:2.4vh;font-weight:200}
@@ -30,25 +27,23 @@ html,body{margin:0;height:100%;background:#000;color:#7d828c;
 #timeline .hour span{position:absolute;top:-1em;left:0;font-size:1.7vh;color:#4a4f58;
   background:#000;padding-right:.6em}
 #timeline .block{position:absolute;left:4em;right:.3em;box-sizing:border-box;
+  display:flex;align-items:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   background:#1c1f24;border-left:3px solid #7d828c;border-radius:2px;
-  padding:.25em .7em;overflow:hidden;font-size:2.1vh;color:#c4c8d0}
-#timeline .block .t{font-size:1.5vh;color:#7d828c}
-#timeline .now{position:absolute;left:4em;right:0;border-top:1px solid #d9694a;height:0}
-#timeline .now::before{content:'';position:absolute;left:-.32em;top:-.3em;
+  padding:0 .7em;font-size:2.1vh;color:#c4c8d0}
+#timeline .block .t{color:#7d828c;margin-right:.5em}
+#timeline .now{position:absolute;left:0;right:0;border-top:1px solid #d9694a;height:0}
+#timeline .now::before{content:'';position:absolute;left:3.7em;top:-.3em;
   width:.6em;height:.6em;border-radius:50%;background:#d9694a}
-#timeline .now .label{position:absolute;top:-1em;left:.5em;font-size:1.6vh;color:#d9694a;
-  background:#000;padding:0 .4em}
+#timeline .now .label{position:absolute;top:-1em;left:0;font-size:1.7vh;color:#d9694a;
+  background:#000;padding-right:.6em}
 </style></head>
 <body>
 <div id="w">
-  <div id="clockView"><div id="clock"></div><div id="date"></div>
-    <div id="sub">Family dashboard coming soon</div></div>
   <div id="today"><div class="heading">Today</div><div class="body"></div></div>
   <div id="upcoming"><div class="heading">Upcoming</div><div class="body"></div></div>
 </div>
 <script>
 var w = document.getElementById('w');
-var clockView = document.getElementById('clockView');
 var todayView = document.getElementById('today');
 var upcomingView = document.getElementById('upcoming');
 
@@ -57,17 +52,10 @@ var DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturda
 var MONTHS = ['January','February','March','April','May','June','July','August',
   'September','October','November','December'];
 
-function tickClock() {
-  var n = new Date();
-  document.getElementById('clock').textContent = pad(n.getHours()) + ':' + pad(n.getMinutes());
-  document.getElementById('date').textContent = DAYS[n.getDay()] + ' ' + n.getDate() + ' ' + MONTHS[n.getMonth()];
-}
 function drift() {
   var x = Math.random() * 16 - 8, y = Math.random() * 16 - 8;
   w.style.transform = 'translate(calc(-50% + ' + x + 'vw),calc(-50% + ' + y + 'vh))';
 }
-tickClock();
-setInterval(tickClock, 5000);
 setInterval(drift, 60000);
 
 // ---------------------------------------------------------------- calendar
@@ -303,10 +291,9 @@ function renderToday(occ) {
   var rangeStart = hourStart * 60, rangeLen = (hourEnd - hourStart) * 60;
 
   // #timeline's CSS height (68vh); block sizes are computed in vh rather
-  // than % of that so a short event still gets a readable minimum height
-  // instead of being squashed to a sliver and clipping its own text.
+  // than % of that so a short event still gets a readable minimum height.
   var TIMELINE_VH = 68;
-  var MIN_BLOCK_VH = 5;
+  var MIN_BLOCK_VH = 4;
 
   var timeline = document.createElement('div');
   timeline.id = 'timeline';
@@ -329,13 +316,11 @@ function renderToday(occ) {
     block.className = 'block';
     block.style.top = top + 'vh';
     block.style.height = height + 'vh';
-    var t = document.createElement('div');
+    var t = document.createElement('span');
     t.className = 't';
-    t.textContent = pad(e.start.getHours()) + ':' + pad(e.start.getMinutes());
-    var s = document.createElement('div');
-    s.textContent = e.summary;
+    t.textContent = pad(e.start.getHours()) + ':' + pad(e.start.getMinutes()) + ' -';
     block.appendChild(t);
-    block.appendChild(s);
+    block.appendChild(document.createTextNode(e.summary));
     timeline.appendChild(block);
   });
 
@@ -381,11 +366,11 @@ function renderUpcoming(occ) {
   });
 }
 
-// Rotate clock -> today's events -> upcoming events, every 20s. A page
-// opened with ?view=today or ?view=upcoming shows just that view instead,
-// so it can be checked from a laptop browser without waiting on the TV.
-var VIEW_ORDER = [clockView, todayView, upcomingView];
-var NAMED_VIEWS = { clock: clockView, today: todayView, upcoming: upcomingView };
+// Rotate today's events -> upcoming events, every 20s. A page opened with
+// ?view=today or ?view=upcoming shows just that view instead, so it can be
+// checked from a laptop browser without waiting on the TV.
+var VIEW_ORDER = [todayView, upcomingView];
+var NAMED_VIEWS = { today: todayView, upcoming: upcomingView };
 var forcedView = NAMED_VIEWS[new URLSearchParams(location.search).get('view')] || null;
 var viewIndex = 0;
 
