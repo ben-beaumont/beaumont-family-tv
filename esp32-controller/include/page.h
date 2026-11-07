@@ -11,12 +11,12 @@ static const char PAGE_HTML[] = R"HTML(<!doctype html>
 <style>
 html,body{margin:0;height:100%;background:#000;color:#7d828c;
   font-family:Helvetica,Arial,sans-serif;overflow:hidden;cursor:none}
-#w{position:absolute;left:50%;top:50%;width:90vw;max-width:90vw;text-align:center;
+#w{position:absolute;left:50%;top:50%;max-width:60vw;text-align:center;
   transform:translate(-50%,-50%);transition:transform 3s ease}
 #clock{font-size:16vh;font-weight:200;color:#a9adb5;letter-spacing:.02em}
 #date{font-size:4vh;margin-top:1vh}
 #sub{font-size:2.4vh;margin-top:6vh;color:#4a4f58}
-#today,#upcoming{display:none;text-align:left;font-size:2.6vh;line-height:1.6}
+#today,#upcoming{display:none;width:44vw;text-align:left;font-size:2.6vh;line-height:1.6}
 #today .heading,#upcoming .heading{color:#a9adb5;font-size:4vh;font-weight:200;margin-bottom:2vh}
 #today .day,#upcoming .day{color:#a9adb5;font-size:3vh;margin-top:2.4vh;font-weight:200}
 #today .day:first-child,#upcoming .day:first-child{margin-top:0}
@@ -31,11 +31,13 @@ html,body{margin:0;height:100%;background:#000;color:#7d828c;
   background:#000;padding-right:.6em}
 #timeline .block{position:absolute;left:4em;right:.3em;box-sizing:border-box;
   background:#1c1f24;border-left:3px solid #7d828c;border-radius:2px;
-  padding:.15em .7em;overflow:hidden;font-size:2.1vh;color:#c4c8d0}
+  padding:.25em .7em;overflow:hidden;font-size:2.1vh;color:#c4c8d0}
 #timeline .block .t{font-size:1.5vh;color:#7d828c}
-#timeline .now{position:absolute;left:4em;right:0;border-top:2px solid #b5482f;height:0}
-#timeline .now .label{position:absolute;top:-1em;left:-4em;width:3.6em;text-align:right;
-  font-size:1.7vh;color:#b5482f}
+#timeline .now{position:absolute;left:4em;right:0;border-top:1px solid #d9694a;height:0}
+#timeline .now::before{content:'';position:absolute;left:-.32em;top:-.3em;
+  width:.6em;height:.6em;border-radius:50%;background:#d9694a}
+#timeline .now .label{position:absolute;top:-1em;left:.5em;font-size:1.6vh;color:#d9694a;
+  background:#000;padding:0 .4em}
 </style></head>
 <body>
 <div id="w">
@@ -300,6 +302,12 @@ function renderToday(occ) {
   hourEnd = Math.min(hourEnd, 24);
   var rangeStart = hourStart * 60, rangeLen = (hourEnd - hourStart) * 60;
 
+  // #timeline's CSS height (68vh); block sizes are computed in vh rather
+  // than % of that so a short event still gets a readable minimum height
+  // instead of being squashed to a sliver and clipping its own text.
+  var TIMELINE_VH = 68;
+  var MIN_BLOCK_VH = 5;
+
   var timeline = document.createElement('div');
   timeline.id = 'timeline';
   for (var h = hourStart; h <= hourEnd; h++) {
@@ -315,12 +323,12 @@ function renderToday(occ) {
   timed.forEach(function (e) {
     var startMin = Math.max(rangeStart, minutesOfDay(e.start, startOfToday, startOfTomorrow));
     var endMin = Math.min(rangeStart + rangeLen, minutesOfDay(e.end, startOfToday, startOfTomorrow));
-    var top = (startMin - rangeStart) / rangeLen * 100;
-    var height = Math.max((endMin - startMin) / rangeLen * 100, 2.5);
+    var top = (startMin - rangeStart) / rangeLen * TIMELINE_VH;
+    var height = Math.max((endMin - startMin) / rangeLen * TIMELINE_VH, MIN_BLOCK_VH);
     var block = document.createElement('div');
     block.className = 'block';
-    block.style.top = top + '%';
-    block.style.height = height + '%';
+    block.style.top = top + 'vh';
+    block.style.height = height + 'vh';
     var t = document.createElement('div');
     t.className = 't';
     t.textContent = pad(e.start.getHours()) + ':' + pad(e.start.getMinutes());
