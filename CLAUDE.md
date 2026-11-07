@@ -39,6 +39,13 @@ go dark at night.
   the Python script), reports its foreground app and power state, and
   `/launch?tv=0` successfully opens the stand-in dashboard in the TV's
   browser (confirmed both in the serial log and on screen).
+- webOS has no API to turn off its own screensaver, and it overrides any
+  foreground app (including our dashboard) after a few minutes with no real
+  remote input. Worked around by opening a second WebSocket to the TV's
+  pointer-input socket and nudging it every 30s while the dashboard is in
+  front, mimicking real input. You'll see a brief, tiny pointer flicker on
+  screen every 30s; that's expected. Verified on hardware: the lounge TV no
+  longer drops into its screensaver while the dashboard is up.
 - Still to do on the ESP32 side:
   - Kitchen TV: get its IP, let it pair (accept the prompt on the TV), copy
     its MAC into `config.h` for Wake-on-LAN.
