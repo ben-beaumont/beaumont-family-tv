@@ -44,6 +44,13 @@ static const char* PERMISSIONS[] = {
 static const uint32_t WAKE_LAUNCH_WINDOW_MS = 5UL * 60 * 1000;  // give up showing after a wake
 static const uint32_t IDLE_MS = (uint32_t)IDLE_MINUTES * 60 * 1000;
 
+// The TV's own screensaver has no "disable" API and overrides any foreground
+// app, including our dashboard. While the dashboard is on screen we nudge its
+// pointer input every so often so the TV sees "real" input and leaves its
+// screensaver off; this is a known workaround, not an official feature.
+static const char* DASHBOARD_APP_ID = "com.webos.app.browser";
+static const uint32_t POINTER_KEEPALIVE_MS = 30UL * 1000;
+
 struct Tv {
   const TvConfig* cfg = nullptr;
   int index = 0;
@@ -56,6 +63,10 @@ struct Tv {
   String power;            // "Active", "Screen Off", "Active Standby", ...
   uint32_t idleSince = 0;  // millis() when it went idle; 0 = not idle
   uint32_t launchDeadline = 0;  // after a scheduled wake: show the dashboard until this time
+
+  WebSocketsClient wsPtr;       // second connection: the TV's pointer-input socket
+  bool pointerConnected = false;
+  uint32_t lastKeepAlive = 0;
 };
 
 static constexpr size_t NUM_TVS = sizeof(TV_CONFIG) / sizeof(TV_CONFIG[0]);
@@ -137,6 +148,36 @@ static void launchDashboard(Tv& tv) {
   LOG(tv, "showing dashboard %s", dashboardUrl().c_str());
 }
 
+// Splits a "wss://host:port/path" URL as returned by getPointerInputSocket.
+static bool parseWsUrl(const String& url, String& host, uint16_t& port, String& path) {
+  int hostStart = url.indexOf("://");
+  if (hostStart < 0) return false;
+  hostStart += 3;
+  int pathStart = url.indexOf('/', hostStart);
+  String authority = pathStart < 0 ? url.substring(hostStart) : url.substring(hostStart, pathStart);
+  path = pathStart < 0 ? "/" : url.substring(pathStart);
+  int colon = authority.indexOf(':');
+  if (colon < 0) {
+    host = authority;
+    port = 3001;
+  } else {
+    host = authority.substring(0, colon);
+    port = (uint16_t)authority.substring(colon + 1).toInt();
+  }
+  return host.length() > 0;
+}
+
+static void connectPointerSocket(Tv& tv, const String& socketPath) {
+  String host, path;
+  uint16_t port;
+  if (!parseWsUrl(socketPath, host, port, path)) {
+    LOG(tv, "can't parse pointer socket path: %s", socketPath.c_str());
+    return;
+  }
+  tv.wsPtr.beginSSL(host.c_str(), port, path.c_str(), "", "");
+  LOG(tv, "pointer input socket ready");
+}
+
 static bool parseMac(const char* s, uint8_t mac[6]) {
   unsigned int b[6];
   if (sscanf(s, "%x%*c%x%*c%x%*c%x%*c%x%*c%x", &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) != 6)
@@ -205,6 +246,7 @@ static void onMessage(Tv& tv, const uint8_t* data, size_t len) {
     ssap(tv, "subscribe", "pwr", "ssap://com.webos.service.tvpower/power/getPowerState",
          sub.as<JsonObjectConst>());
     ssap(tv, "request", "netinfo", "ssap://com.webos.service.connectionmanager/getinfo");
+    ssap(tv, "request", "ptr", "ssap://com.webos.service.networkinput/getPointerInputSocket");
     return;
   }
 
@@ -232,6 +274,9 @@ static void onMessage(Tv& tv, const uint8_t* data, size_t len) {
     Serial.printf("[%s] network info: ", tv.cfg->name);
     serializeJson(pl, Serial);
     Serial.println();
+  } else if (!strcmp(id, "ptr")) {
+    const char* socketPath = pl["socketPath"] | "";
+    if (*socketPath) connectPointerSocket(tv, String(socketPath));
   } else if (!strcmp(id, "launch")) {
     if (!(pl["returnValue"] | false)) LOG(tv, "TV refused to open the dashboard");
   }
@@ -265,6 +310,16 @@ static void checkTv(Tv& tv) {
   if (!tv.registered) return;
   bool screenOn = tv.power == "Active";
   uint32_t now = millis();
+
+  // While our own dashboard is on screen, nudge the TV's pointer input so it
+  // sees "real" activity and doesn't let its own screensaver take over.
+  if (tv.pointerConnected && tv.fgApp == DASHBOARD_APP_ID &&
+      now - tv.lastKeepAlive >= POINTER_KEEPALIVE_MS) {
+    tv.wsPtr.sendTXT("type:move\ndx:1\ndy:0\ndown:0\n\n");
+    tv.wsPtr.sendTXT("type:move\ndx:-1\ndy:0\ndown:0\n\n");
+    tv.lastKeepAlive = now;
+    LOG(tv, "pointer keep-alive sent");
+  }
 
   // After a scheduled wake: show the dashboard as soon as the TV is up.
   if (tv.launchDeadline) {
@@ -385,6 +440,16 @@ void setup() {
     });
     tv.ws.setReconnectInterval(10000);
     tv.ws.enableHeartbeat(30000, 10000, 3);
+
+    tv.wsPtr.onEvent([&tv](WStype_t type, uint8_t* payload, size_t length) {
+      if (type == WStype_CONNECTED) {
+        tv.pointerConnected = true;
+        LOG(tv, "pointer socket connected");
+      } else if (type == WStype_DISCONNECTED) {
+        tv.pointerConnected = false;
+      }
+    });
+    tv.wsPtr.setReconnectInterval(10000);
     // The TV uses a self-signed certificate on the local network: with no
     // fingerprint the library connects without verifying it. The empty
     // protocol stops it sending a WebSocket sub-protocol the TV doesn't know.
@@ -396,7 +461,10 @@ void setup() {
 void loop() {
   server.handleClient();
   for (Tv& tv : tvs) {
-    if (tv.enabled) tv.ws.loop();
+    if (tv.enabled) {
+      tv.ws.loop();
+      tv.wsPtr.loop();
+    }
   }
 
   static uint32_t lastCheck = 0;
