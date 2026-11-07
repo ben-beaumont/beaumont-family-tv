@@ -267,6 +267,24 @@ function renderUpcoming(occ) {
   });
 }
 
+// Rotate clock -> today's events -> upcoming events, every 20s. A page
+// opened with ?view=today or ?view=upcoming shows just that view instead,
+// so it can be checked from a laptop browser without waiting on the TV.
+var VIEW_ORDER = [clockView, todayView, upcomingView];
+var NAMED_VIEWS = { clock: clockView, today: todayView, upcoming: upcomingView };
+var forcedView = NAMED_VIEWS[new URLSearchParams(location.search).get('view')] || null;
+var viewIndex = 0;
+
+function showView(view) {
+  if (view === todayView) renderToday(lastAgenda);
+  if (view === upcomingView) renderUpcoming(lastAgenda);
+  VIEW_ORDER.forEach(function (v) { v.style.display = v === view ? 'block' : 'none'; });
+}
+function rotateView() {
+  viewIndex = (viewIndex + 1) % VIEW_ORDER.length;
+  showView(VIEW_ORDER[viewIndex]);
+}
+
 var lastAgenda = [];
 function refreshCalendar() {
   fetch('/calendar.ics').then(function (r) {
@@ -276,22 +294,12 @@ function refreshCalendar() {
     var now = new Date();
     var weekAhead = new Date(now.getTime() + 7 * 86400000);
     lastAgenda = buildAgenda(text, now, weekAhead);
-  }).catch(function () { lastAgenda = []; });
+  }).catch(function () { lastAgenda = []; })
+    .then(function () { showView(forcedView || VIEW_ORDER[viewIndex]); });
 }
 refreshCalendar();
 setInterval(refreshCalendar, 5 * 60000);
-
-// Rotate clock -> today's events -> upcoming events, every 20s. Re-render
-// from the cached agenda each time so "Today"/times stay current.
-var VIEWS = [clockView, todayView, upcomingView];
-var viewIndex = 0;
-function rotateView() {
-  viewIndex = (viewIndex + 1) % VIEWS.length;
-  if (VIEWS[viewIndex] === todayView) renderToday(lastAgenda);
-  if (VIEWS[viewIndex] === upcomingView) renderUpcoming(lastAgenda);
-  VIEWS.forEach(function (v, i) { v.style.display = i === viewIndex ? 'block' : 'none'; });
-}
-setInterval(rotateView, 20000);
+if (!forcedView) setInterval(rotateView, 20000);
 </script>
 </body></html>
 )HTML";
