@@ -16,24 +16,27 @@ html,body{margin:0;height:100%;background:#000;color:#7d828c;
 #clock{font-size:16vh;font-weight:200;color:#a9adb5;letter-spacing:.02em}
 #date{font-size:4vh;margin-top:1vh}
 #sub{font-size:2.4vh;margin-top:6vh;color:#4a4f58}
-#cal{display:none;text-align:left;font-size:2.6vh;line-height:1.6}
-#cal .day{color:#a9adb5;font-size:3vh;margin-top:2.4vh;font-weight:200}
-#cal .day:first-child{margin-top:0}
-#cal .ev{display:flex;gap:1.2em;white-space:nowrap;overflow:hidden}
-#cal .ev .time{color:#4a4f58;flex:0 0 auto;width:5.5em}
-#cal .ev .summary{overflow:hidden;text-overflow:ellipsis}
-#cal .empty{color:#4a4f58}
+#today,#upcoming{display:none;text-align:left;font-size:2.6vh;line-height:1.6}
+#today .heading,#upcoming .heading{color:#a9adb5;font-size:4vh;font-weight:200;margin-bottom:2vh}
+#today .day,#upcoming .day{color:#a9adb5;font-size:3vh;margin-top:2.4vh;font-weight:200}
+#today .day:first-child,#upcoming .day:first-child{margin-top:0}
+#today .ev,#upcoming .ev{display:flex;gap:1.2em;white-space:nowrap;overflow:hidden}
+#today .ev .time,#upcoming .ev .time{color:#4a4f58;flex:0 0 auto;width:5.5em}
+#today .ev .summary,#upcoming .ev .summary{overflow:hidden;text-overflow:ellipsis}
+#today .empty,#upcoming .empty{color:#4a4f58}
 </style></head>
 <body>
 <div id="w">
   <div id="clockView"><div id="clock"></div><div id="date"></div>
     <div id="sub">Family dashboard coming soon</div></div>
-  <div id="cal"></div>
+  <div id="today"><div class="heading">Today</div><div class="body"></div></div>
+  <div id="upcoming"><div class="heading">Upcoming</div><div class="body"></div></div>
 </div>
 <script>
 var w = document.getElementById('w');
 var clockView = document.getElementById('clockView');
-var calView = document.getElementById('cal');
+var todayView = document.getElementById('today');
+var upcomingView = document.getElementById('upcoming');
 
 function pad(n) { return (n < 10 ? '0' : '') + n; }
 var DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -135,7 +138,10 @@ function occurrencesInWindow(ev, windowStart, windowEnd) {
   if (!ev.DTSTART) return [];
   var start = ev.DTSTART.date;
   if (!ev.RRULE) {
-    var effectiveEnd = ev.DTEND ? ev.DTEND.date : start;
+    // An all-day event with no DTEND spans its whole start day (RFC 5545
+    // default duration), not just the midnight instant DTSTART parses to.
+    var effectiveEnd = ev.DTEND ? ev.DTEND.date :
+      (ev.DTSTART.allDay ? new Date(start.getTime() + 86400000) : start);
     return (start <= windowEnd && effectiveEnd >= windowStart) ? [start] : [];
   }
   var rule = parseRrule(ev.RRULE);
@@ -212,34 +218,52 @@ function dayLabel(date, today) {
   return DAYS[date.getDay()] + ' ' + date.getDate() + ' ' + MONTHS[date.getMonth()];
 }
 
-function renderAgenda(occ) {
-  calView.innerHTML = '';
-  if (!occ.length) {
-    calView.innerHTML = '<div class="empty">Nothing on the calendar this week</div>';
+function appendEventRow(container, e) {
+  var row = document.createElement('div');
+  row.className = 'ev';
+  var time = document.createElement('div');
+  time.className = 'time';
+  time.textContent = e.allDay ? 'All day' : pad(e.start.getHours()) + ':' + pad(e.start.getMinutes());
+  var summary = document.createElement('div');
+  summary.className = 'summary';
+  summary.textContent = e.summary;
+  row.appendChild(time);
+  row.appendChild(summary);
+  container.appendChild(row);
+}
+
+function renderToday(occ) {
+  var today = new Date();
+  var body = todayView.querySelector('.body');
+  body.innerHTML = '';
+  var mine = occ.filter(function (e) { return dayLabel(e.start, today) === 'Today'; });
+  if (!mine.length) {
+    body.innerHTML = '<div class="empty">Nothing on today</div>';
     return;
   }
+  mine.forEach(function (e) { appendEventRow(body, e); });
+}
+
+function renderUpcoming(occ) {
   var today = new Date();
+  var body = upcomingView.querySelector('.body');
+  body.innerHTML = '';
+  var rest = occ.filter(function (e) { return dayLabel(e.start, today) !== 'Today'; });
+  if (!rest.length) {
+    body.innerHTML = '<div class="empty">Nothing coming up this week</div>';
+    return;
+  }
   var lastDay = null;
-  occ.slice(0, 12).forEach(function (e) {
+  rest.slice(0, 12).forEach(function (e) {
     var label = dayLabel(e.start, today);
     if (label !== lastDay) {
       var h = document.createElement('div');
       h.className = 'day';
       h.textContent = label;
-      calView.appendChild(h);
+      body.appendChild(h);
       lastDay = label;
     }
-    var row = document.createElement('div');
-    row.className = 'ev';
-    var time = document.createElement('div');
-    time.className = 'time';
-    time.textContent = e.allDay ? 'All day' : pad(e.start.getHours()) + ':' + pad(e.start.getMinutes());
-    var summary = document.createElement('div');
-    summary.className = 'summary';
-    summary.textContent = e.summary;
-    row.appendChild(time);
-    row.appendChild(summary);
-    calView.appendChild(row);
+    appendEventRow(body, e);
   });
 }
 
@@ -257,14 +281,15 @@ function refreshCalendar() {
 refreshCalendar();
 setInterval(refreshCalendar, 5 * 60000);
 
-// Alternate between the clock and the agenda every 20s. Re-render the
-// agenda from the cached data each time so "Today"/times stay current.
-var showingCal = false;
+// Rotate clock -> today's events -> upcoming events, every 20s. Re-render
+// from the cached agenda each time so "Today"/times stay current.
+var VIEWS = [clockView, todayView, upcomingView];
+var viewIndex = 0;
 function rotateView() {
-  showingCal = !showingCal;
-  if (showingCal) renderAgenda(lastAgenda);
-  clockView.style.display = showingCal ? 'none' : 'block';
-  calView.style.display = showingCal ? 'block' : 'none';
+  viewIndex = (viewIndex + 1) % VIEWS.length;
+  if (VIEWS[viewIndex] === todayView) renderToday(lastAgenda);
+  if (VIEWS[viewIndex] === upcomingView) renderUpcoming(lastAgenda);
+  VIEWS.forEach(function (v, i) { v.style.display = i === viewIndex ? 'block' : 'none'; });
 }
 setInterval(rotateView, 20000);
 </script>
