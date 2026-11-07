@@ -108,6 +108,13 @@ static const uint32_t IDLE_MS = (uint32_t)IDLE_MINUTES * 60 * 1000;
 static const char* DASHBOARD_APP_ID = "com.webos.app.browser";
 static const uint32_t POINTER_KEEPALIVE_MS = 30UL * 1000;
 
+// The "fg" subscription (below) doesn't always push an update for every
+// transition - observed after exiting the browser via the remote's Back
+// button, which left fgApp stuck reporting "browser" indefinitely. This
+// actively re-asks every so often so that kind of drift self-corrects
+// quickly instead of silently breaking idle detection.
+static const uint32_t FG_POLL_MS = 5UL * 1000;
+
 struct Tv {
   const TvConfig* cfg = nullptr;
   int index = 0;
@@ -120,6 +127,7 @@ struct Tv {
   String power;            // "Active", "Screen Off", "Active Standby", ...
   uint32_t idleSince = 0;  // millis() when it went idle; 0 = not idle
   uint32_t launchDeadline = 0;  // after a scheduled wake: show the dashboard until this time
+  uint32_t lastFgPoll = 0;  // last time we actively re-checked the foreground app
 
   // Second connection: the TV's pointer-input socket, used only for the
   // screensaver keep-alive. Opened lazily (only while this TV is actually
@@ -351,7 +359,7 @@ static void onMessage(Tv& tv, const uint8_t* data, size_t len) {
     return;
   }
 
-  if (!strcmp(id, "fg")) {
+  if (!strcmp(id, "fg") || !strcmp(id, "fgpoll")) {
     setForeground(tv, String(pl["appId"] | ""));
   } else if (!strcmp(id, "pwr")) {
     String state = pl["state"] | "";
@@ -405,6 +413,11 @@ static void checkTv(Tv& tv) {
   // dismisses it).
   bool screenOn = tv.power == "Active" || tv.power == "Screen Saver";
   uint32_t now = millis();
+
+  if (now - tv.lastFgPoll >= FG_POLL_MS) {
+    tv.lastFgPoll = now;
+    ssap(tv, "request", "fgpoll", "ssap://com.webos.applicationManager/getForegroundAppInfo");
+  }
 
   // While our own dashboard is on screen, nudge the TV's pointer input so it
   // sees "real" activity and doesn't let its own screensaver take over.
