@@ -517,15 +517,22 @@ function renderLocations(rows) {
   markerLayer.clearLayers();
 
   var bounds = homePos ? [homePos] : [];  // the map always includes home
+  // People in the same zone are published at the zone's centre, i.e. the same
+  // point. Stack their labels downwards so nobody is hidden behind someone else.
+  var seen = {};
+  var stepPx = Math.round(window.innerHeight * 0.05);
   (rows || []).forEach(function (p) {
     if (p.lat == null || p.lng == null) return;
+    var spot = p.lat.toFixed(5) + ',' + p.lng.toFixed(5);
+    var slot = seen[spot] || 0;
+    seen[spot] = slot + 1;
     var ageMs = Date.now() - new Date(p.updated_at).getTime();
     var stale = ageMs > STALE_MS;
     var moving = !stale && p.heading !== null && p.heading !== undefined &&
       p.speed_mps && p.speed_mps > 0.5;
     var icon = L.divIcon({
       className: 'fh-marker-wrap', html: markerHtml(p, stale, moving),
-      iconSize: [220, 32], iconAnchor: [8, 16]
+      iconSize: [220, 32], iconAnchor: [8, 16 - slot * stepPx]
     });
     L.marker([p.lat, p.lng], { icon: icon }).addTo(markerLayer);
     bounds.push([p.lat, p.lng]);
