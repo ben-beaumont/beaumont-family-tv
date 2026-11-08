@@ -41,6 +41,17 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
 
     // MARK: - control
 
+    var authorizationDescription: String {
+        switch authorization {
+        case .notDetermined: return "not asked yet"
+        case .restricted: return "restricted"
+        case .denied: return "denied (Never)"
+        case .authorizedWhenInUse: return "While Using (needs Always)"
+        case .authorizedAlways: return "Always"
+        @unknown default: return "unknown"
+        }
+    }
+
     func requestPermission() {
         switch manager.authorizationStatus {
         case .notDetermined: manager.requestWhenInUseAuthorization()

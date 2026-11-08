@@ -89,7 +89,10 @@ struct ContentView: View {
             Section("Location permission") {
                 Text("Family TV needs \"Always\" location to update while the app is closed.")
                     .font(.footnote)
-                Button("Allow location") { location.requestPermission() }
+                Text("Current permission: \(location.authorizationDescription)").font(.footnote)
+                if location.authorization == .notDetermined {
+                    Button("Allow location") { location.requestPermission() }
+                }
                 Button("Open Settings") {
                     if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
                 }
