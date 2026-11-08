@@ -558,7 +558,11 @@ static Tv* tvFromArg() {
 }
 
 static void setupWeb() {
-  server.on("/", []() { server.send(200, "text/html", PAGE_HTML); });
+  // send() would copy PAGE_HTML into a heap String first; under memory
+  // pressure that large allocation can silently fail, sending a 200 with
+  // an empty body (a blank page on the TV) instead of an error. send_P
+  // writes straight from flash, no big heap copy needed.
+  server.on("/", []() { server.send_P(200, "text/html", PAGE_HTML); });
 
   server.on("/status", []() {
     JsonDocument doc;
