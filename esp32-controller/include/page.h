@@ -527,8 +527,8 @@ setInterval(refreshLocations, 60000);
 // currently visible.
 
 var PAGES = [
-  { el: dashboardPage, display: 'flex' },
-  { el: locationsPage, display: 'block' }
+  { name: 'calendar', el: dashboardPage, display: 'flex' },
+  { name: 'map', el: locationsPage, display: 'block' }
 ];
 var pageIndex = 0;
 
@@ -539,8 +539,17 @@ function showPage(i) {
   // that came out as 0x0, so force a re-measure now it's actually visible.
   if (PAGES[i].el === locationsPage) setTimeout(function () { familyMap.invalidateSize(); }, 0);
 }
-showPage(0);
-setInterval(function () { showPage((pageIndex + 1) % PAGES.length); }, 20000);
+
+// ?page=calendar or ?page=map jumps straight there and stops rotating, so
+// it can be checked from a laptop browser without waiting on the TV.
+var forcedPageName = new URLSearchParams(location.search).get('page');
+var forcedPageIndex = -1;
+PAGES.forEach(function (p, idx) { if (p.name === forcedPageName) forcedPageIndex = idx; });
+
+showPage(forcedPageIndex >= 0 ? forcedPageIndex : 0);
+if (forcedPageIndex < 0) {
+  setInterval(function () { showPage((pageIndex + 1) % PAGES.length); }, 20000);
+}
 </script>
 </body></html>
 )HTML";
