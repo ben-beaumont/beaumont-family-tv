@@ -18,6 +18,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1"   # iPhone only
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # DEVELOPMENT_TEAM comes from Secrets.xcconfig
     info:
@@ -26,6 +27,7 @@ targets:
         CFBundleDisplayName: Family TV
         ITSAppUsesNonExemptEncryption: false
         UIBackgroundModes: [location]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSLocationWhenInUseUsageDescription: Family TV shows which zone you are in (Home, School...) and how long until you are home.
         NSLocationAlwaysAndWhenInUsageDescription: Family TV needs "Always" location so the family display stays up to date while the app is closed. It shows zone names by default, not a live dot, while you are at a saved place.
         SupabaseURL: $(SUPABASE_URL)
