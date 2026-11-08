@@ -425,9 +425,14 @@ function refreshCalendar() {
     var startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     var weekAhead = new Date(startOfToday.getTime() + 7 * 86400000);
     lastAgenda = buildAgenda(text, startOfToday, weekAhead);
-  }).catch(function () { lastAgenda = []; })
-    .then(renderAll);
+    calendarLoaded = true;
+  }).catch(function () {
+    // Keep showing the last good agenda (the ESP32 may just be rebooting or busy);
+    // if we have never loaded one, retry soon instead of waiting 5 minutes.
+    if (!calendarLoaded) setTimeout(refreshCalendar, 15000);
+  }).then(renderAll);
 }
+var calendarLoaded = false;
 refreshCalendar();
 setInterval(refreshCalendar, 5 * 60000);
 
@@ -535,7 +540,7 @@ function refreshLocations() {
     return r.json();
   }).then(function (rows) {
     lastLocations = rows;
-  }).catch(function () { lastLocations = []; })
+  }).catch(function () { /* keep the last known positions; stale ones fade by age */ })
     .then(function () { renderLocations(lastLocations); });
 }
 loadHome();
