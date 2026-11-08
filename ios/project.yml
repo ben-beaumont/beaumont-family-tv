@@ -1,0 +1,34 @@
+name: BeaumontFamily
+options:
+  bundleIdPrefix: com.beaumont
+  deploymentTarget:
+    iOS: "17.0"
+configFiles:
+  Debug: Secrets.xcconfig
+  Release: Secrets.xcconfig
+targets:
+  BeaumontFamily:
+    type: application
+    platform: iOS
+    sources: [BeaumontFamily]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.beaumont.familytv
+        SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # DEVELOPMENT_TEAM comes from Secrets.xcconfig
+    info:
+      path: BeaumontFamily/Info.plist
+      properties:
+        CFBundleDisplayName: Family TV
+        ITSAppUsesNonExemptEncryption: false
+        UIBackgroundModes: [location]
+        NSLocationWhenInUseUsageDescription: Family TV shows which zone you are in (Home, School...) and how long until you are home.
+        NSLocationAlwaysAndWhenInUsageDescription: Family TV needs "Always" location so the family display stays up to date while the app is closed. It shows zone names by default, not a live dot, while you are at a saved place.
+        SupabaseURL: $(SUPABASE_URL)
+        SupabaseAnonKey: $(SUPABASE_ANON_KEY)
+        HomeLat: $(HOME_LAT)
+        HomeLng: $(HOME_LNG)

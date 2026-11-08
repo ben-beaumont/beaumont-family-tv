@@ -6,3 +6,8 @@ esp32-controller/include/config.h
 .vscode/
 __pycache__/
 .claude/
+
+# iOS secrets and generated project
+ios/Secrets.xcconfig
+ios/BeaumontFamily.xcodeproj/
+ios/BeaumontFamily/Info.plist

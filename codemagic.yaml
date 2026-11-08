@@ -1,0 +1,51 @@
+workflows:
+  family-tv-ios:
+    name: Family TV iPhone app
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    integrations:
+      # Name must match the App Store Connect API key you add in Codemagic
+      # (Team settings > Integrations > Developer Portal).
+      app_store_connect: Codemagic
+    environment:
+      # Create a variable group called "family_tv" (mark all as Secure) with:
+      #   SUPABASE_URL, SUPABASE_ANON_KEY, HOME_LAT, HOME_LNG, DEVELOPMENT_TEAM
+      groups:
+        - family_tv
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.beaumont.familytv
+      xcode: latest
+    triggering:
+      events: []   # manual starts only
+    scripts:
+      - name: Write Secrets.xcconfig
+        script: |
+          # xcconfig treats // as a comment, so turn https:// into https:/$()/
+          URL_ESC=$(echo "$SUPABASE_URL" | sed 's#//#/$()/#')
+          {
+            echo "DEVELOPMENT_TEAM = $DEVELOPMENT_TEAM"
+            echo "SUPABASE_URL = $URL_ESC"
+            echo "SUPABASE_ANON_KEY = $SUPABASE_ANON_KEY"
+            echo "HOME_LAT = $HOME_LAT"
+            echo "HOME_LNG = $HOME_LNG"
+            echo "CURRENT_PROJECT_VERSION = $BUILD_NUMBER"
+            echo "MARKETING_VERSION = 1.0"
+          } > ios/Secrets.xcconfig
+      - name: Generate Xcode project
+        script: |
+          brew install xcodegen
+          cd ios && xcodegen
+      - name: Apply signing profiles
+        script: xcode-project use-profiles --project ios/BeaumontFamily.xcodeproj
+      - name: Build IPA
+        script: |
+          xcode-project build-ipa \
+            --project ios/BeaumontFamily.xcodeproj \
+            --scheme BeaumontFamily
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
