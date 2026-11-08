@@ -9,12 +9,10 @@ workflows:
       app_store_connect: Codemagic
     environment:
       # Create a variable group called "family_tv" (mark all as Secure) with:
-      #   SUPABASE_URL, SUPABASE_ANON_KEY, HOME_LAT, HOME_LNG, DEVELOPMENT_TEAM
+      #   SUPABASE_URL, SUPABASE_ANON_KEY, HOME_LAT, HOME_LNG, DEVELOPMENT_TEAM,
+      #   CERTIFICATE_PRIVATE_KEY (contents of the RSA private key file)
       groups:
         - family_tv
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.beaumont.familytv
       xcode: latest
     triggering:
       events: []   # manual starts only
@@ -36,8 +34,12 @@ workflows:
         script: |
           brew install xcodegen
           cd ios && xcodegen
-      - name: Apply signing profiles
-        script: xcode-project use-profiles --project ios/BeaumontFamily.xcodeproj
+      - name: Set up code signing
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files "com.beaumont.familytv"             --type IOS_APP_STORE             --create
+          keychain add-certificates
+          xcode-project use-profiles --project ios/BeaumontFamily.xcodeproj
       - name: Build IPA
         script: |
           xcode-project build-ipa \
