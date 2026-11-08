@@ -18,6 +18,8 @@
 //                     so we can tell when it's gone even if the TV won't say
 //   /calendar.ics     cached copy of the calendar feed, for the dashboard page
 //   /calendar/refresh re-fetch the calendar feed now
+//   /locations.json   cached copy of everyone's location, from Supabase
+//   /locations/refresh re-fetch locations now
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -81,6 +83,41 @@ static void fetchCalendar() {
   calendarIcs = https.getString();
   calendarFetchedAt = millis();
   Serial.printf("[calendar] fetched %u bytes\n", (unsigned)calendarIcs.length());
+  https.end();
+}
+
+static const size_t LOCATIONS_MAX_BYTES = 50000;
+static String locationsJson;
+static uint32_t locationsFetchedAt = 0;  // millis() of last successful fetch; 0 = never
+
+static void fetchLocations() {
+  if (!strlen(SUPABASE_PROJECT_URL)) return;
+  WiFiClientSecure client;
+  client.setCACert(GOOGLE_ROOT_CA);  // Supabase's TLS chain also roots at GTS Root R4
+  HTTPClient https;
+  https.setTimeout(15000);
+  String url = String(SUPABASE_PROJECT_URL) + "/rest/v1/locations?select=*";
+  if (!https.begin(client, url)) {
+    Serial.println("[locations] couldn't start request");
+    return;
+  }
+  https.addHeader("apikey", SUPABASE_API_KEY);
+  https.addHeader("Authorization", String("Bearer ") + SUPABASE_API_KEY);
+  int code = https.GET();
+  if (code != HTTP_CODE_OK) {
+    Serial.printf("[locations] fetch failed: HTTP %d\n", code);
+    https.end();
+    return;
+  }
+  int len = https.getSize();
+  if (len > (int)LOCATIONS_MAX_BYTES) {
+    Serial.printf("[locations] response too big (%d bytes) - skipped\n", len);
+    https.end();
+    return;
+  }
+  locationsJson = https.getString();
+  locationsFetchedAt = millis();
+  Serial.printf("[locations] fetched %u bytes\n", (unsigned)locationsJson.length());
   https.end();
 }
 
@@ -570,6 +607,16 @@ static void setupWeb() {
     server.send(200, "text/plain", calendarFetchedAt ? "ok" : "fetch failed - see serial log");
   });
 
+  server.on("/locations.json", []() {
+    if (!locationsFetchedAt) return server.send(503, "text/plain", "locations not fetched yet");
+    server.send(200, "application/json", locationsJson);
+  });
+
+  server.on("/locations/refresh", []() {
+    fetchLocations();
+    server.send(200, "text/plain", locationsFetchedAt ? "ok" : "fetch failed - see serial log");
+  });
+
   server.begin();
 }
 
@@ -598,6 +645,7 @@ void setup() {
   configTzTime(TZ_INFO, "pool.ntp.org", "time.google.com");
   setupWeb();
   fetchCalendar();
+  fetchLocations();
 
   for (size_t i = 0; i < NUM_TVS; i++) {
     Tv& tv = tvs[i];
@@ -656,5 +704,12 @@ void loop() {
   if (strlen(CALENDAR_ICS_URL) && millis() - lastCalendarFetch >= calendarIntervalMs) {
     lastCalendarFetch = millis();
     fetchCalendar();
+  }
+
+  static uint32_t lastLocationsFetch = 0;
+  uint32_t locationsIntervalMs = (uint32_t)LOCATIONS_REFRESH_MINUTES * 60 * 1000;
+  if (strlen(SUPABASE_PROJECT_URL) && millis() - lastLocationsFetch >= locationsIntervalMs) {
+    lastLocationsFetch = millis();
+    fetchLocations();
   }
 }

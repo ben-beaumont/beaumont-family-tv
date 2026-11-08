@@ -43,3 +43,13 @@ static const WakeTime WAKE_SCHEDULE[] = {
 // calendar, which is why it lives here and not in the repo.
 #define CALENDAR_ICS_URL ""
 #define CALENDAR_REFRESH_MINUTES 15
+
+// ---- Locations --------------------------------------------------------------
+// Supabase project URL and secret (service_role-style, "sb_secret_...") API
+// key - Project Settings -> API in the Supabase dashboard. The secret key
+// bypasses Row Level Security, so treat it like a password: it never leaves
+// the ESP32 (the dashboard page reads the already-fetched copy, not Supabase
+// directly). Leave the URL blank to disable.
+#define SUPABASE_PROJECT_URL ""
+#define SUPABASE_API_KEY ""
+#define LOCATIONS_REFRESH_MINUTES 2

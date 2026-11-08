@@ -2,8 +2,8 @@
 
 // Stand-in dashboard served by the ESP32 until the real family app exists.
 // Dark and dim for OLED, and it drifts every minute so nothing burns in.
-// Shows a Today timeline next to an Upcoming list, built from the calendar
-// feed at /calendar.ics (see main.cpp - fetchCalendar()).
+// Rotates between a calendar page (Today timeline + Upcoming list) and a
+// locations page (everyone's zone/ETA, from Supabase via /locations.json).
 static const char PAGE_HTML[] = R"HTML(<!doctype html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -13,7 +13,17 @@ html,body{margin:0;height:100%;background:#000;color:#7d828c;
   font-family:Helvetica,Arial,sans-serif;overflow:hidden;cursor:none}
 #w{position:absolute;left:50%;top:50%;max-width:72vw;text-align:center;
   transform:translate(-50%,-50%);transition:transform 3s ease}
-#dashboard{display:flex;gap:4vw}
+#dashboard{display:none;gap:4vw}
+#locations{display:none;width:34vw;text-align:left;font-size:2.6vh;line-height:1.6}
+#locations .heading{color:#a9adb5;font-size:4vh;font-weight:200;margin-bottom:2vh}
+#locations .person{display:flex;align-items:center;gap:1em;margin-top:1.6vh}
+#locations .person:first-child{margin-top:0}
+#locations .marker{width:2.4vh;height:2.4vh;flex:0 0 auto;color:#7d828c}
+#locations .dot{width:1vh;height:1vh;border-radius:50%;background:#4a4f58;
+  flex:0 0 auto;margin:0 .7vh}
+#locations .name{color:#c4c8d0}
+#locations .meta{font-size:1.8vh;color:#4a4f58}
+#locations .empty{color:#4a4f58}
 #today,#upcoming{text-align:left;font-size:2.6vh;line-height:1.6}
 #today{width:38vw}
 #upcoming{width:24vw}
@@ -46,11 +56,14 @@ html,body{margin:0;height:100%;background:#000;color:#7d828c;
     <div id="today"><div class="heading">Today</div><div class="body"></div></div>
     <div id="upcoming"><div class="heading">Upcoming</div><div class="body"></div></div>
   </div>
+  <div id="locations"><div class="heading">Family</div><div class="body"></div></div>
 </div>
 <script>
 var w = document.getElementById('w');
+var dashboardPage = document.getElementById('dashboard');
 var todayView = document.getElementById('today');
 var upcomingView = document.getElementById('upcoming');
+var locationsPage = document.getElementById('locations');
 
 function pad(n) { return (n < 10 ? '0' : '') + n; }
 var DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -411,6 +424,110 @@ setInterval(refreshCalendar, 5 * 60000);
 // Re-render Today on its own, more frequent timer so the "now" line keeps
 // moving without waiting on the next full calendar re-fetch.
 setInterval(function () { renderToday(lastAgenda); }, 60000);
+
+// --------------------------------------------------------------- locations
+//
+// Everyone's last-known zone/position from Supabase (via /locations.json -
+// the ESP32 fetches it with a secret key that never reaches this page).
+// Shown as a dot when stationary, or an arrow rotated to the compass
+// heading when moving, so motion is visible at a glance.
+
+var STALE_MS = 30 * 60000;  // older than this: show "last seen", not a live reading
+
+function formatAgo(ms) {
+  var mins = Math.round(ms / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + ' min ago';
+  return Math.round(mins / 60) + 'h ago';
+}
+
+function renderLocations(rows) {
+  var body = locationsPage.querySelector('.body');
+  body.innerHTML = '';
+  if (!rows || !rows.length) {
+    body.innerHTML = '<div class="empty">No one sharing location</div>';
+    return;
+  }
+  rows.forEach(function (p) {
+    var ageMs = Date.now() - new Date(p.updated_at).getTime();
+    var stale = ageMs > STALE_MS;
+    var moving = !stale && p.heading !== null && p.heading !== undefined &&
+      p.speed_mps && p.speed_mps > 0.5;
+
+    var row = document.createElement('div');
+    row.className = 'person';
+
+    if (moving) {
+      var svgNS = 'http://www.w3.org/2000/svg';
+      var svg = document.createElementNS(svgNS, 'svg');
+      svg.setAttribute('class', 'marker');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.style.transform = 'rotate(' + p.heading + 'deg)';
+      var path = document.createElementNS(svgNS, 'path');
+      path.setAttribute('d', 'M12 2 L19 21 L12 17 L5 21 Z');
+      path.setAttribute('fill', 'currentColor');
+      svg.appendChild(path);
+      row.appendChild(svg);
+    } else {
+      var dot = document.createElement('span');
+      dot.className = 'dot';
+      row.appendChild(dot);
+    }
+
+    var info = document.createElement('div');
+    var name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = p.person;
+    var meta = document.createElement('div');
+    meta.className = 'meta';
+    if (stale) {
+      meta.textContent = 'Last seen ' + formatAgo(ageMs);
+    } else {
+      var bits = [p.zone || 'On the way'];
+      if (moving) bits.push(Math.round(p.speed_mps * 2.23694) + ' mph');
+      if (p.eta_home_minutes != null && p.eta_home_minutes > 0) {
+        bits.push(p.eta_home_minutes + ' min home');
+      }
+      meta.textContent = bits.join(' · ');
+    }
+    info.appendChild(name);
+    info.appendChild(meta);
+    row.appendChild(info);
+    body.appendChild(row);
+  });
+}
+
+var lastLocations = [];
+function refreshLocations() {
+  fetch('/locations.json').then(function (r) {
+    if (!r.ok) throw new Error('no locations yet');
+    return r.json();
+  }).then(function (rows) {
+    lastLocations = rows;
+  }).catch(function () { lastLocations = []; })
+    .then(function () { renderLocations(lastLocations); });
+}
+refreshLocations();
+setInterval(refreshLocations, 60000);
+
+// ---------------------------------------------------------- page rotation
+//
+// Alternates the calendar page and the locations page every 20s. Each
+// page's own data refreshes on its own timer above regardless of which is
+// currently visible.
+
+var PAGES = [
+  { el: dashboardPage, display: 'flex' },
+  { el: locationsPage, display: 'block' }
+];
+var pageIndex = 0;
+
+function showPage(i) {
+  pageIndex = i;
+  PAGES.forEach(function (p, idx) { p.el.style.display = idx === i ? p.display : 'none'; });
+}
+showPage(0);
+setInterval(function () { showPage((pageIndex + 1) % PAGES.length); }, 20000);
 </script>
 </body></html>
 )HTML";
