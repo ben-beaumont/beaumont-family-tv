@@ -193,6 +193,14 @@ static Tv tvs[NUM_TVS];
 static WebServer server(80);
 static Preferences prefs;
 
+// Only one TV's pointer socket (screensaver keep-alive) is allowed open at
+// a time, regardless of how many are showing the dashboard. Found live:
+// two TVs each wanting their own pointer socket - 4 concurrent TLS
+// sessions total with their main connections - was enough to exhaust the
+// ESP32's heap and make the web server itself stop responding, not just
+// the keep-alive. -1 = nobody currently holds it.
+static int activePointerTv = -1;
+
 #define LOG(tv, fmt, ...) Serial.printf("[%s] " fmt "\n", (tv).cfg->name, ##__VA_ARGS__)
 
 // ------------------------------------------------------------------ helpers
@@ -486,10 +494,13 @@ static void checkTv(Tv& tv) {
 
   // While our own dashboard is on screen, nudge the TV's pointer input so it
   // sees "real" activity and doesn't let its own screensaver take over.
-  // The pointer socket is only opened for as long as that's actually true.
-  if (isDashboardAlive(tv)) {
+  // The pointer socket is only opened for as long as that's actually true,
+  // and only for one TV at a time - see activePointerTv above.
+  bool holdsPointerSlot = activePointerTv == -1 || activePointerTv == tv.index;
+  if (isDashboardAlive(tv) && holdsPointerSlot) {
     if (!tv.pointerConnected && !tv.pointerRequested) {
       tv.pointerRequested = true;
+      activePointerTv = tv.index;
       ssap(tv, "request", "ptr", "ssap://com.webos.service.networkinput/getPointerInputSocket");
     }
     if (tv.pointerConnected && now - tv.lastKeepAlive >= POINTER_KEEPALIVE_MS) {
@@ -502,6 +513,7 @@ static void checkTv(Tv& tv) {
     tv.wsPtr.disconnect();
     tv.pointerConnected = false;
     tv.pointerRequested = false;
+    if (activePointerTv == tv.index) activePointerTv = -1;
     LOG(tv, "pointer socket closed");
   }
 
