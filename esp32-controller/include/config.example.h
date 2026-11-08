@@ -53,3 +53,6 @@ static const WakeTime WAKE_SCHEDULE[] = {
 #define SUPABASE_PROJECT_URL ""
 #define SUPABASE_API_KEY ""
 #define LOCATIONS_REFRESH_SECONDS 20
+// Home, for the house icon on the TV map. 0 = no icon.
+#define HOME_LAT 0.0
+#define HOME_LNG 0.0

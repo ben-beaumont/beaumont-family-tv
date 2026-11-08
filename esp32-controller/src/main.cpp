@@ -90,14 +90,22 @@ static const size_t LOCATIONS_MAX_BYTES = 50000;
 static String locationsJson;
 static uint32_t locationsFetchedAt = 0;  // millis() of last successful fetch; 0 = never
 
+// One TLS connection is created once and reused (keep-alive). Building a fresh
+// one every 20s needs a large contiguous block of heap, which fragments away
+// once the TV sockets are running ("SSL - Memory allocation failed").
+static WiFiClientSecure* locationsClient = nullptr;
+
 static void fetchLocations() {
   if (!strlen(SUPABASE_PROJECT_URL)) return;
-  WiFiClientSecure client;
-  client.setCACert(GOOGLE_ROOT_CA);  // Supabase's TLS chain also roots at GTS Root R4
+  if (!locationsClient) {
+    locationsClient = new WiFiClientSecure();
+    locationsClient->setCACert(GOOGLE_ROOT_CA);  // Supabase's TLS chain also roots at GTS Root R4
+  }
   HTTPClient https;
+  https.setReuse(true);
   https.setTimeout(15000);
   String url = String(SUPABASE_PROJECT_URL) + "/rest/v1/locations?select=*";
-  if (!https.begin(client, url)) {
+  if (!https.begin(*locationsClient, url)) {
     Serial.println("[locations] couldn't start request");
     return;
   }
@@ -105,8 +113,10 @@ static void fetchLocations() {
   https.addHeader("Authorization", String("Bearer ") + SUPABASE_API_KEY);
   int code = https.GET();
   if (code != HTTP_CODE_OK) {
-    Serial.printf("[locations] fetch failed: HTTP %d\n", code);
+    Serial.printf("[locations] fetch failed: HTTP %d (free heap %u, largest block %u)\n",
+                  code, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
     https.end();
+    locationsClient->stop();  // next attempt starts a clean connection
     return;
   }
   int len = https.getSize();
@@ -626,6 +636,19 @@ static void setupWeb() {
   server.on("/locations.json", []() {
     if (!locationsFetchedAt) return server.send(503, "text/plain", "locations not fetched yet");
     server.send(200, "application/json", locationsJson);
+  });
+
+  // Home position for the map's house icon. Lives in config.h (gitignored) so
+  // the address never reaches the repo.
+  server.on("/home.json", []() {
+#if defined(HOME_LAT) && defined(HOME_LNG)
+    if (HOME_LAT != 0.0 || HOME_LNG != 0.0) {
+      server.send(200, "application/json",
+                  String("{\"lat\":") + String(HOME_LAT, 6) + ",\"lng\":" + String(HOME_LNG, 6) + "}");
+      return;
+    }
+#endif
+    server.send(404, "text/plain", "home not configured");
   });
 
   server.on("/locations/refresh", []() {

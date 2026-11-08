@@ -30,6 +30,7 @@ html,body{margin:0;height:100%;background:#000;color:#7d828c;
 .fh-marker .name{color:#e4e6ea;font-size:1.7vh}
 .fh-marker .meta{color:#9ea3ad;font-size:1.3vh}
 .fh-marker.stale{opacity:.5}
+.fh-home{width:3.6vh;height:3.6vh;color:#8fa9d9;opacity:.85;filter:drop-shadow(0 0 2px #000)}
 #today,#upcoming{text-align:left;font-size:2.6vh;line-height:1.6}
 #today{width:38vw}
 #upcoming{width:24vw}
@@ -461,7 +462,28 @@ L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_D
   attribution: 'Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
   maxZoom: 16
 }).addTo(familyMap);
-var markerLayer = L.layerGroup().addTo(familyMap);
+var homeLayer = L.layerGroup().addTo(familyMap);
+var markerLayer = L.layerGroup().addTo(familyMap);  // added after home, so people draw on top
+var homePos = null;  // [lat, lng] from /home.json (config.h on the ESP32)
+
+function loadHome() {
+  fetch('/home.json').then(function (r) {
+    if (!r.ok) throw new Error('no home configured');
+    return r.json();
+  }).then(function (h) {
+    homePos = [h.lat, h.lng];
+    homeLayer.clearLayers();
+    L.marker(homePos, {
+      interactive: false,
+      icon: L.divIcon({
+        className: 'fh-marker-wrap',
+        html: '<svg class="fh-home" viewBox="0 0 24 24"><path d="M12 3 2 12h3v8h5v-6h4v6h5v-8h3z" fill="currentColor"/></svg>',
+        iconSize: [28, 28], iconAnchor: [14, 14]
+      })
+    }).addTo(homeLayer);
+    renderLocations(lastLocations);
+  }).catch(function () { homePos = null; });
+}
 
 function markerHtml(p, stale, moving) {
   var icon = moving
@@ -488,10 +510,9 @@ function markerHtml(p, stale, moving) {
 
 function renderLocations(rows) {
   markerLayer.clearLayers();
-  if (!rows || !rows.length) return;
 
-  var bounds = [];
-  rows.forEach(function (p) {
+  var bounds = homePos ? [homePos] : [];  // the map always includes home
+  (rows || []).forEach(function (p) {
     if (p.lat == null || p.lng == null) return;
     var ageMs = Date.now() - new Date(p.updated_at).getTime();
     var stale = ageMs > STALE_MS;
@@ -517,6 +538,7 @@ function refreshLocations() {
   }).catch(function () { lastLocations = []; })
     .then(function () { renderLocations(lastLocations); });
 }
+loadHome();
 refreshLocations();
 setInterval(refreshLocations, 20000);
 
