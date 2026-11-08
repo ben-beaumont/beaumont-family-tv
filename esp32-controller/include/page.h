@@ -518,7 +518,7 @@ function refreshLocations() {
     .then(function () { renderLocations(lastLocations); });
 }
 refreshLocations();
-setInterval(refreshLocations, 60000);
+setInterval(refreshLocations, 20000);
 
 // ---------------------------------------------------------- page rotation
 //

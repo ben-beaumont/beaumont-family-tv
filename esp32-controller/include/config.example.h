@@ -52,4 +52,4 @@ static const WakeTime WAKE_SCHEDULE[] = {
 // directly). Leave the URL blank to disable.
 #define SUPABASE_PROJECT_URL ""
 #define SUPABASE_API_KEY ""
-#define LOCATIONS_REFRESH_MINUTES 2
+#define LOCATIONS_REFRESH_SECONDS 20

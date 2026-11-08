@@ -723,7 +723,11 @@ void loop() {
   }
 
   static uint32_t lastLocationsFetch = 0;
+#ifdef LOCATIONS_REFRESH_SECONDS
+  uint32_t locationsIntervalMs = (uint32_t)LOCATIONS_REFRESH_SECONDS * 1000;
+#else  // older config.h files only define minutes
   uint32_t locationsIntervalMs = (uint32_t)LOCATIONS_REFRESH_MINUTES * 60 * 1000;
+#endif
   if (strlen(SUPABASE_PROJECT_URL) && millis() - lastLocationsFetch >= locationsIntervalMs) {
     lastLocationsFetch = millis();
     fetchLocations();

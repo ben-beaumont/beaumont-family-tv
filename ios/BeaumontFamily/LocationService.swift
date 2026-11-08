@@ -132,7 +132,7 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
 
         // Throttle, but always push straight away on a zone change.
         let zoneChanged = lastPushedZone == nil || lastPushedZone! != current?.name
-        guard zoneChanged || Date().timeIntervalSince(lastPushAt) > 60, !pushing else { return }
+        guard zoneChanged || Date().timeIntervalSince(lastPushAt) > 20, !pushing else { return }
         pushing = true
         defer { pushing = false }
 
