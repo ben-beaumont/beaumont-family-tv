@@ -82,6 +82,9 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     nonisolated func locationManagerDidChangeAuthorization(_ m: CLLocationManager) {
         Task { @MainActor in
             self.authorization = m.authorizationStatus
+            // iOS only offers "Always" in Settings once the app has asked for it,
+            // so ask straight after "While Using" is granted.
+            if m.authorizationStatus == .authorizedWhenInUse { m.requestAlwaysAuthorization() }
             self.start()
         }
     }
