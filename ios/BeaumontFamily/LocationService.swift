@@ -123,6 +123,8 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
 
     private func handle(_ loc: CLLocation) async {
         lastLocation = loc
+        // Never publish a blank name (the name is lost on reinstall, the sign-in is not).
+        guard !personName.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         let current = zone(for: loc)
 
         // Continuous updates only while travelling.

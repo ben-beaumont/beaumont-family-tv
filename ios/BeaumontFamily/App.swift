@@ -68,7 +68,13 @@ struct ContentView: View {
 
     private var statusSection: some View {
         Section("Status") {
-            LabeledContent("Sharing as", value: personName)
+            if personName.isEmpty {
+                TextField("Your name (shown on the TV)", text: $personName)
+                    .onSubmit { location.pushNow() }
+                Text("Enter your name to start sharing.").foregroundStyle(.red).font(.footnote)
+            } else {
+                LabeledContent("Sharing as", value: personName)
+            }
             LabeledContent("Zone", value: location.lastZone ?? "On the way / unknown")
             if let eta = location.lastEta { LabeledContent("ETA home", value: eta == 0 ? "Home" : "\(eta) min") }
             if let t = location.lastUpload { LabeledContent("Last update", value: t.formatted(date: .omitted, time: .shortened)) }
