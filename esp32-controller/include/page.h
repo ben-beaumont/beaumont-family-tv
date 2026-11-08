@@ -11,19 +11,25 @@ static const char PAGE_HTML[] = R"HTML(<!doctype html>
 <style>
 html,body{margin:0;height:100%;background:#000;color:#7d828c;
   font-family:Helvetica,Arial,sans-serif;overflow:hidden;cursor:none}
-#w{position:absolute;left:50%;top:50%;max-width:72vw;text-align:center;
+#w{position:absolute;left:50%;top:50%;max-width:82vw;text-align:center;
   transform:translate(-50%,-50%);transition:transform 3s ease}
 #dashboard{display:none;gap:4vw}
-#locations{display:none;width:34vw;text-align:left;font-size:2.6vh;line-height:1.6}
+#locations{display:none;width:64vw;text-align:left;font-size:2.6vh;line-height:1.6}
 #locations .heading{color:#a9adb5;font-size:4vh;font-weight:200;margin-bottom:2vh}
-#locations .person{display:flex;align-items:center;gap:1em;margin-top:1.6vh}
-#locations .person:first-child{margin-top:0}
-#locations .marker{width:2.4vh;height:2.4vh;flex:0 0 auto;color:#7d828c}
-#locations .dot{width:1vh;height:1vh;border-radius:50%;background:#4a4f58;
-  flex:0 0 auto;margin:0 .7vh}
-#locations .name{color:#c4c8d0}
-#locations .meta{font-size:1.8vh;color:#4a4f58}
 #locations .empty{color:#4a4f58}
+#map{height:66vh;margin-top:.5vh;border-radius:4px;overflow:hidden;background:#111}
+.leaflet-control-attribution{background:rgba(0,0,0,.55)!important;color:#5a5f68!important;
+  font-size:1.3vh!important}
+.leaflet-control-attribution a{color:#7d828c!important}
+.fh-marker{display:flex;align-items:center;gap:.4em;white-space:nowrap;pointer-events:none}
+.fh-marker .arrow{width:2vh;height:2vh;color:#e4e6ea;flex:0 0 auto;
+  filter:drop-shadow(0 0 2px #000)}
+.fh-marker .dot{width:1vh;height:1vh;border-radius:50%;background:#e4e6ea;
+  flex:0 0 auto;box-shadow:0 0 0 2px rgba(0,0,0,.6)}
+.fh-marker .label{background:rgba(0,0,0,.65);border-radius:3px;padding:.1em .5em}
+.fh-marker .name{color:#e4e6ea;font-size:1.7vh}
+.fh-marker .meta{color:#9ea3ad;font-size:1.3vh}
+.fh-marker.stale{opacity:.5}
 #today,#upcoming{text-align:left;font-size:2.6vh;line-height:1.6}
 #today{width:38vw}
 #upcoming{width:24vw}
@@ -49,14 +55,17 @@ html,body{margin:0;height:100%;background:#000;color:#7d828c;
   width:.6em;height:.6em;border-radius:50%;background:#d9694a}
 #timeline .now .label{position:absolute;top:-1em;left:0;font-size:1.7vh;color:#d9694a;
   background:#000;padding-right:.6em}
-</style></head>
+</style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
 <body>
 <div id="w">
   <div id="dashboard">
     <div id="today"><div class="heading">Today</div><div class="body"></div></div>
     <div id="upcoming"><div class="heading">Upcoming</div><div class="body"></div></div>
   </div>
-  <div id="locations"><div class="heading">Family</div><div class="body"></div></div>
+  <div id="locations"><div class="heading">Family</div><div id="map"></div></div>
 </div>
 <script>
 var w = document.getElementById('w');
@@ -441,60 +450,61 @@ function formatAgo(ms) {
   return Math.round(mins / 60) + 'h ago';
 }
 
-function renderLocations(rows) {
-  var body = locationsPage.querySelector('.body');
-  body.innerHTML = '';
-  if (!rows || !rows.length) {
-    body.innerHTML = '<div class="empty">No one sharing location</div>';
-    return;
+// Dark basemap, no API key needed - the real webOS app will use MapKit JS
+// per the project plan; this is the stand-in page's pragmatic equivalent.
+var familyMap = L.map('map', {
+  zoomControl: false, attributionControl: true,
+  dragging: false, scrollWheelZoom: false, doubleClickZoom: false,
+  touchZoom: false, boxZoom: false, keyboard: false
+}).setView([52.2053, 0.1218], 12);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+  subdomains: 'abcd', maxZoom: 19
+}).addTo(familyMap);
+var markerLayer = L.layerGroup().addTo(familyMap);
+
+function markerHtml(p, stale, moving) {
+  var icon = moving
+    ? '<svg class="arrow" viewBox="0 0 24 24" style="transform:rotate(' + p.heading + 'deg)">' +
+      '<path d="M12 2 L19 21 L12 17 L5 21 Z" fill="currentColor"/></svg>'
+    : '<span class="dot"></span>';
+  var metaText;
+  if (stale) {
+    metaText = 'Last seen ' + formatAgo(Date.now() - new Date(p.updated_at).getTime());
+  } else {
+    var bits = [p.zone || 'On the way'];
+    if (moving) bits.push(Math.round(p.speed_mps * 2.23694) + ' mph');
+    if (p.eta_home_minutes != null && p.eta_home_minutes > 0) bits.push(p.eta_home_minutes + ' min home');
+    metaText = bits.join(' · ');
   }
+  var div = document.createElement('div');
+  div.className = 'fh-marker' + (stale ? ' stale' : '');
+  div.innerHTML = icon +
+    '<span class="label"><span class="name"></span><br><span class="meta"></span></span>';
+  div.querySelector('.name').textContent = p.person;
+  div.querySelector('.meta').textContent = metaText;
+  return div;
+}
+
+function renderLocations(rows) {
+  markerLayer.clearLayers();
+  if (!rows || !rows.length) return;
+
+  var bounds = [];
   rows.forEach(function (p) {
+    if (p.lat == null || p.lng == null) return;
     var ageMs = Date.now() - new Date(p.updated_at).getTime();
     var stale = ageMs > STALE_MS;
     var moving = !stale && p.heading !== null && p.heading !== undefined &&
       p.speed_mps && p.speed_mps > 0.5;
-
-    var row = document.createElement('div');
-    row.className = 'person';
-
-    if (moving) {
-      var svgNS = 'http://www.w3.org/2000/svg';
-      var svg = document.createElementNS(svgNS, 'svg');
-      svg.setAttribute('class', 'marker');
-      svg.setAttribute('viewBox', '0 0 24 24');
-      svg.style.transform = 'rotate(' + p.heading + 'deg)';
-      var path = document.createElementNS(svgNS, 'path');
-      path.setAttribute('d', 'M12 2 L19 21 L12 17 L5 21 Z');
-      path.setAttribute('fill', 'currentColor');
-      svg.appendChild(path);
-      row.appendChild(svg);
-    } else {
-      var dot = document.createElement('span');
-      dot.className = 'dot';
-      row.appendChild(dot);
-    }
-
-    var info = document.createElement('div');
-    var name = document.createElement('div');
-    name.className = 'name';
-    name.textContent = p.person;
-    var meta = document.createElement('div');
-    meta.className = 'meta';
-    if (stale) {
-      meta.textContent = 'Last seen ' + formatAgo(ageMs);
-    } else {
-      var bits = [p.zone || 'On the way'];
-      if (moving) bits.push(Math.round(p.speed_mps * 2.23694) + ' mph');
-      if (p.eta_home_minutes != null && p.eta_home_minutes > 0) {
-        bits.push(p.eta_home_minutes + ' min home');
-      }
-      meta.textContent = bits.join(' · ');
-    }
-    info.appendChild(name);
-    info.appendChild(meta);
-    row.appendChild(info);
-    body.appendChild(row);
+    var icon = L.divIcon({
+      className: 'fh-marker-wrap', html: markerHtml(p, stale, moving),
+      iconSize: [220, 32], iconAnchor: [8, 16]
+    });
+    L.marker([p.lat, p.lng], { icon: icon }).addTo(markerLayer);
+    bounds.push([p.lat, p.lng]);
   });
+  if (bounds.length) familyMap.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
 }
 
 var lastLocations = [];
@@ -525,6 +535,9 @@ var pageIndex = 0;
 function showPage(i) {
   pageIndex = i;
   PAGES.forEach(function (p, idx) { p.el.style.display = idx === i ? p.display : 'none'; });
+  // Leaflet measures its container on init; while #locations was hidden
+  // that came out as 0x0, so force a re-measure now it's actually visible.
+  if (PAGES[i].el === locationsPage) setTimeout(function () { familyMap.invalidateSize(); }, 0);
 }
 showPage(0);
 setInterval(function () { showPage((pageIndex + 1) % PAGES.length); }, 20000);
