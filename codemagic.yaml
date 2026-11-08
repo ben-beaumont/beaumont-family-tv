@@ -38,7 +38,7 @@ workflows:
         script: |
           set -e
           keychain initialize
-          app-store-connect fetch-signing-files "com.beaumont.familytv"             --type IOS_APP_STORE             --create
+          app-store-connect fetch-signing-files "com.beaumont.familytv"             --type IOS_APP_ADHOC             --create
           keychain add-certificates
           xcode-project use-profiles --project ios/BeaumontFamily.xcodeproj
       - name: Build IPA
@@ -48,7 +48,3 @@ workflows:
             --scheme BeaumontFamily
     artifacts:
       - build/ios/ipa/*.ipa
-    publishing:
-      app_store_connect:
-        auth: integration
-        submit_to_testflight: true
