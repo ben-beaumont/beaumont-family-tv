@@ -26,3 +26,10 @@ create policy "own row: insert" on public.locations for insert with check (auth.
 create policy "own row: update" on public.locations for update
   using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own row: delete" on public.locations for delete using (auth.uid() = user_id);
+
+-- The TV page signs in as a dedicated read-only "tv" user and reads everyone's
+-- row. Create the user (Authentication > Users; email + password, auto-confirm),
+-- then replace the UUID below with its id and run this:
+--
+-- create policy "tv: read all" on public.locations for select
+--   using (auth.uid() = '00000000-0000-0000-0000-000000000000');

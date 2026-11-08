@@ -451,7 +451,8 @@ setInterval(function () { renderToday(lastAgenda); }, 60000);
 // Shown as a dot when stationary, or an arrow rotated to the compass
 // heading when moving, so motion is visible at a glance.
 
-var STALE_MS = 30 * 60000;  // older than this: show "last seen", not a live reading
+var STALE_MS = 30 * 60000;          // on the road: older than this shows "last seen"
+var STALE_IN_ZONE_MS = 12 * 3600000; // in a saved zone: quiet is normal, allow much longer
 
 function formatAgo(ms) {
   var mins = Math.round(ms / 60000);
@@ -495,7 +496,11 @@ function loadHome() {
 }
 
 function describe(p) {
-  var stale = Date.now() - new Date(p.updated_at).getTime() > STALE_MS;
+  // The phone only uploads when something changes (zone enter/exit, movement),
+  // so someone sitting in a zone is legitimately quiet for hours. Only people
+  // on the road go stale quickly.
+  var staleAfter = p.zone ? STALE_IN_ZONE_MS : STALE_MS;
+  var stale = Date.now() - new Date(p.updated_at).getTime() > staleAfter;
   var moving = !stale && p.heading !== null && p.heading !== undefined &&
     p.speed_mps && p.speed_mps > 0.5;
   var meta;
@@ -565,18 +570,61 @@ function renderLocations(rows) {
 }
 
 var lastLocations = [];
+
+// Locations come straight from Supabase when the ESP32 hands us a read-only
+// "tv" login (/tvconfig.json): the browser does the TLS, so the ESP32 needs no
+// memory for it. Otherwise fall back to the ESP32's own cached copy.
+var tvCfg = null, tvToken = null, tvTokenExp = 0;
+
+function tvLogin() {
+  return fetch(tvCfg.url + '/auth/v1/token?grant_type=password', {
+    method: 'POST',
+    headers: { apikey: tvCfg.key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: tvCfg.email, password: tvCfg.password })
+  }).then(function (r) {
+    if (!r.ok) throw new Error('tv login failed');
+    return r.json();
+  }).then(function (d) {
+    tvToken = d.access_token;
+    tvTokenExp = Date.now() + (d.expires_in || 3600) * 1000 - 120000;
+  });
+}
+
+function fetchDirect() {
+  var ready = (tvToken && Date.now() < tvTokenExp) ? Promise.resolve() : tvLogin();
+  return ready.then(function () {
+    return fetch(tvCfg.url + '/rest/v1/locations?select=*', {
+      headers: { apikey: tvCfg.key, Authorization: 'Bearer ' + tvToken }
+    });
+  }).then(function (r) {
+    if (r.status === 401) { tvToken = null; }  // expired: log in again next time
+    if (!r.ok) throw new Error('locations ' + r.status);
+    return r.json();
+  });
+}
+
 function refreshLocations() {
-  fetch('/locations.json').then(function (r) {
+  var req = tvCfg ? fetchDirect() : fetch('/locations.json').then(function (r) {
     if (!r.ok) throw new Error('no locations yet');
     return r.json();
-  }).then(function (rows) {
+  });
+  req.then(function (rows) {
     lastLocations = rows;
   }).catch(function () { /* keep the last known positions; stale ones fade by age */ })
     .then(function () { renderLocations(lastLocations); });
 }
+
+function startLocations() {
+  fetch('/tvconfig.json').then(function (r) { return r.ok ? r.json() : null; })
+    .catch(function () { return null; })
+    .then(function (cfg) {
+      tvCfg = cfg;
+      refreshLocations();
+      setInterval(refreshLocations, 20000);
+    });
+}
 loadHome();
-refreshLocations();
-setInterval(refreshLocations, 20000);
+startLocations();
 
 // ---------------------------------------------------------- page rotation
 //

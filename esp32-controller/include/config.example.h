@@ -53,6 +53,14 @@ static const WakeTime WAKE_SCHEDULE[] = {
 #define SUPABASE_PROJECT_URL ""
 #define SUPABASE_API_KEY ""
 #define LOCATIONS_REFRESH_SECONDS 20
+// Preferred: the TV browser reads locations straight from Supabase (the ESP32
+// has too little memory to keep its own TLS connection to Supabase going).
+// Create a "tv" user in Supabase, give it the read policy from
+// supabase/schema.sql, and fill these in. The key is the *publishable* key.
+// While any of them is blank the ESP32 fetches locations itself (fragile).
+#define TV_EMAIL ""
+#define TV_PASSWORD ""
+#define SUPABASE_ANON_KEY ""
 // Home, for the house icon on the TV map. 0 = no icon.
 #define HOME_LAT 0.0
 #define HOME_LNG 0.0

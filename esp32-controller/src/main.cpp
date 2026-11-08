@@ -95,8 +95,21 @@ static uint32_t locationsFetchedAt = 0;  // millis() of last successful fetch; 0
 // once the TV sockets are running ("SSL - Memory allocation failed").
 static WiFiClientSecure* locationsClient = nullptr;
 
+#ifndef TV_EMAIL
+#define TV_EMAIL ""
+#define TV_PASSWORD ""
+#define SUPABASE_ANON_KEY ""
+#endif
+
+// When the TV login is configured the page reads Supabase itself, and the ESP32
+// skips its own (memory-hungry) TLS fetch entirely.
+static bool locationsInBrowser() {
+  return strlen(SUPABASE_PROJECT_URL) && strlen(TV_EMAIL) && strlen(TV_PASSWORD) &&
+         strlen(SUPABASE_ANON_KEY);
+}
+
 static void fetchLocations() {
-  if (!strlen(SUPABASE_PROJECT_URL)) return;
+  if (!strlen(SUPABASE_PROJECT_URL) || locationsInBrowser()) return;
   if (!locationsClient) {
     locationsClient = new WiFiClientSecure();
     locationsClient->setCACert(GOOGLE_ROOT_CA);  // Supabase's TLS chain also roots at GTS Root R4
@@ -636,6 +649,15 @@ static void setupWeb() {
   server.on("/locations.json", []() {
     if (!locationsFetchedAt) return server.send(503, "text/plain", "locations not fetched yet");
     server.send(200, "application/json", locationsJson);
+  });
+
+  // Lets the TV page sign in to Supabase itself (read-only "tv" user, publishable
+  // key). Same exposure as /locations.json: anyone on the home network can read it.
+  server.on("/tvconfig.json", []() {
+    if (!locationsInBrowser()) return server.send(404, "text/plain", "not configured");
+    server.send(200, "application/json",
+                String("{\"url\":\"") + SUPABASE_PROJECT_URL + "\",\"key\":\"" + SUPABASE_ANON_KEY +
+                    "\",\"email\":\"" + TV_EMAIL + "\",\"password\":\"" + TV_PASSWORD + "\"}");
   });
 
   // Home position for the map's house icon. Lives in config.h (gitignored) so
