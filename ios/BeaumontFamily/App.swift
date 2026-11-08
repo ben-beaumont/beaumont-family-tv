@@ -90,7 +90,7 @@ struct ContentView: View {
                 Text("Family TV needs \"Always\" location to update while the app is closed.")
                     .font(.footnote)
                 Text("Current permission: \(location.authorizationDescription)").font(.footnote)
-                if location.authorization == .notDetermined {
+                if location.authorization == .notDetermined || location.authorization == .authorizedWhenInUse {
                     Button("Allow location") { location.requestPermission() }
                 }
                 Button("Open Settings") {

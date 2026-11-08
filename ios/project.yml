@@ -19,6 +19,9 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1"   # iPhone only
+        # Declared as build settings too, so Xcode's generated Info.plist cannot drop them.
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: Family TV shows which zone you are in (Home, School...) and how long until you are home.
+        INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription: Family TV needs "Always" location so the family display stays up to date while the app is closed. It shows zone names by default, not a live dot, while you are at a saved place.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # DEVELOPMENT_TEAM comes from Secrets.xcconfig
     info:
