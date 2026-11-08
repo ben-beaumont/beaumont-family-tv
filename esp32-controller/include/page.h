@@ -17,7 +17,7 @@ html,body{margin:0;height:100%;background:#000;color:#7d828c;
 #locations{display:none;width:64vw;text-align:left;font-size:2.6vh;line-height:1.6}
 #locations .heading{color:#a9adb5;font-size:4vh;font-weight:200;margin-bottom:2vh}
 #locations .empty{color:#4a4f58}
-#map{height:66vh;margin-top:.5vh;border-radius:4px;overflow:hidden;background:#111}
+#map{height:76vh;border-radius:4px;overflow:hidden;background:#111}
 .leaflet-control-attribution{background:rgba(0,0,0,.55)!important;color:#5a5f68!important;
   font-size:1.3vh!important}
 .leaflet-control-attribution a{color:#7d828c!important}
@@ -65,7 +65,7 @@ html,body{margin:0;height:100%;background:#000;color:#7d828c;
     <div id="today"><div class="heading">Today</div><div class="body"></div></div>
     <div id="upcoming"><div class="heading">Upcoming</div><div class="body"></div></div>
   </div>
-  <div id="locations"><div class="heading">Family</div><div id="map"></div></div>
+  <div id="locations"><div id="map"></div></div>
 </div>
 <script>
 var w = document.getElementById('w');
