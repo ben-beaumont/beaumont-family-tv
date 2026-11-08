@@ -29,7 +29,11 @@ html,body{margin:0;height:100%;background:#000;color:#7d828c;
 .fh-marker .label{background:rgba(0,0,0,.65);border-radius:3px;padding:.1em .5em}
 .fh-marker .name{color:#e4e6ea;font-size:1.7vh}
 .fh-marker .meta{color:#9ea3ad;font-size:1.3vh}
-.fh-marker.stale{opacity:.5}
+.fh-marker.stale,.fh-marker .row.stale{opacity:.5}
+.fh-marker.multi{align-items:flex-start}
+.fh-marker.multi .dot{margin-top:.6vh}
+.fh-marker .row .meta{margin-left:.6em}
+.fh-marker:not(.multi) .row .meta{margin-left:0}
 .fh-home{width:3.6vh;height:3.6vh;color:#8fa9d9;opacity:.85;filter:drop-shadow(0 0 2px #000)}
 #today,#upcoming{text-align:left;font-size:2.6vh;line-height:1.6}
 #today{width:38vw}
@@ -490,26 +494,50 @@ function loadHome() {
   }).catch(function () { homePos = null; });
 }
 
-function markerHtml(p, stale, moving) {
-  var icon = moving
-    ? '<svg class="arrow" viewBox="0 0 24 24" style="transform:rotate(' + p.heading + 'deg)">' +
-      '<path d="M12 2 L19 21 L12 17 L5 21 Z" fill="currentColor"/></svg>'
-    : '<span class="dot"></span>';
-  var metaText;
+function describe(p) {
+  var stale = Date.now() - new Date(p.updated_at).getTime() > STALE_MS;
+  var moving = !stale && p.heading !== null && p.heading !== undefined &&
+    p.speed_mps && p.speed_mps > 0.5;
+  var meta;
   if (stale) {
-    metaText = 'Last seen ' + formatAgo(Date.now() - new Date(p.updated_at).getTime());
+    meta = 'Last seen ' + formatAgo(Date.now() - new Date(p.updated_at).getTime());
   } else {
     var bits = [p.zone || 'On the way'];
     if (moving) bits.push(Math.round(p.speed_mps * 2.23694) + ' mph');
     if (p.eta_home_minutes != null && p.eta_home_minutes > 0) bits.push(p.eta_home_minutes + ' min home');
-    metaText = bits.join(' · ');
+    meta = bits.join(' · ');
   }
+  return { p: p, stale: stale, moving: moving, meta: meta };
+}
+
+// One card per position: everyone at the same spot (e.g. all at Home, which is
+// published as the zone centre) is listed together, so nobody is hidden.
+function markerHtml(group) {
+  var single = group.length === 1;
+  var first = group[0];
+  var icon = single && first.moving
+    ? '<svg class="arrow" viewBox="0 0 24 24" style="transform:rotate(' + first.p.heading + 'deg)">' +
+      '<path d="M12 2 L19 21 L12 17 L5 21 Z" fill="currentColor"/></svg>'
+    : '<span class="dot"></span>';
+  var allStale = group.every(function (g) { return g.stale; });
   var div = document.createElement('div');
-  div.className = 'fh-marker' + (stale ? ' stale' : '');
-  div.innerHTML = icon +
-    '<span class="label"><span class="name"></span><br><span class="meta"></span></span>';
-  div.querySelector('.name').textContent = p.person;
-  div.querySelector('.meta').textContent = metaText;
+  div.className = 'fh-marker' + (single ? '' : ' multi') + (allStale ? ' stale' : '');
+  div.innerHTML = icon + '<span class="label"></span>';
+  var label = div.querySelector('.label');
+  group.forEach(function (g) {
+    var row = document.createElement('div');
+    row.className = 'row' + (!allStale && g.stale ? ' stale' : '');
+    var name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = g.p.person;
+    var meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.textContent = g.meta;
+    row.appendChild(name);
+    if (single) row.appendChild(document.createElement('br'));
+    row.appendChild(meta);
+    label.appendChild(row);
+  });
   return div;
 }
 
@@ -517,25 +545,21 @@ function renderLocations(rows) {
   markerLayer.clearLayers();
 
   var bounds = homePos ? [homePos] : [];  // the map always includes home
-  // People in the same zone are published at the zone's centre, i.e. the same
-  // point. Stack their labels downwards so nobody is hidden behind someone else.
-  var seen = {};
-  var stepPx = Math.round(window.innerHeight * 0.05);
+  var groups = {}, order = [];
   (rows || []).forEach(function (p) {
     if (p.lat == null || p.lng == null) return;
     var spot = p.lat.toFixed(5) + ',' + p.lng.toFixed(5);
-    var slot = seen[spot] || 0;
-    seen[spot] = slot + 1;
-    var ageMs = Date.now() - new Date(p.updated_at).getTime();
-    var stale = ageMs > STALE_MS;
-    var moving = !stale && p.heading !== null && p.heading !== undefined &&
-      p.speed_mps && p.speed_mps > 0.5;
+    if (!groups[spot]) { groups[spot] = []; order.push(spot); }
+    groups[spot].push(describe(p));
+  });
+  order.forEach(function (spot) {
+    var g = groups[spot];
     var icon = L.divIcon({
-      className: 'fh-marker-wrap', html: markerHtml(p, stale, moving),
-      iconSize: [220, 32], iconAnchor: [8, 16 - slot * stepPx]
+      className: 'fh-marker-wrap', html: markerHtml(g),
+      iconSize: [220, 32], iconAnchor: [8, g.length > 1 ? 12 : 16]
     });
-    L.marker([p.lat, p.lng], { icon: icon }).addTo(markerLayer);
-    bounds.push([p.lat, p.lng]);
+    L.marker([g[0].p.lat, g[0].p.lng], { icon: icon }).addTo(markerLayer);
+    bounds.push([g[0].p.lat, g[0].p.lng]);
   });
   if (bounds.length) familyMap.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
 }
