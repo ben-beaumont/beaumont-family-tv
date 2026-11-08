@@ -36,6 +36,7 @@ workflows:
           cd ios && xcodegen
       - name: Set up code signing
         script: |
+          set -e
           keychain initialize
           app-store-connect fetch-signing-files "com.beaumont.familytv"             --type IOS_APP_STORE             --create
           keychain add-certificates
