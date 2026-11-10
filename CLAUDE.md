@@ -56,6 +56,14 @@ go dark at night.
   - Let a TV sit idle for `IDLE_MINUTES` to confirm takeover actually
     triggers (so far only verified via manual `/launch`).
   - Test scheduled Wake-on-LAN (`/wake?tv=1`) once the kitchen TV's MAC is known.
+- `tv-app/prototype/index.html` is a single-file design prototype for the
+  webOS TV app, on sample data only (invented names, town and calendar). It
+  shows the target layout: map on the left, a "start cooking at" dinner call
+  worked out from the last ETA home, a who's-where list, and a three-day
+  calendar strip. It has Kitchen and Lounge views, locks to the viewport with
+  no scrolling on a 16:9 screen (checked at 1920x1080), and drifts a couple
+  of pixels each minute. The map is a hand-drawn SVG stand-in for MapKit JS,
+  and it is not wired to Supabase or the calendar feed yet.
 - A Pine A64 was tried as the controller and abandoned (power/boot problems).
 
 ## Hardware and environment
@@ -67,6 +75,8 @@ go dark at night.
 1. Get the kitchen TV connected (IP, pairing, MAC) and confirm idle detection
    actually triggers a takeover on both TVs, not just manual `/launch`.
 2. Build the webOS TV app with sample data (map + calendar + rotating views).
+   Start from `tv-app/prototype/index.html` for layout and the dinner-timing
+   logic; the OLED view rotation and night dimming are still to add.
 3. Set up Supabase schema and auth.
 4. iPhone app: location, zones, ETA.
 5. Calendars (Google Calendar API, or per-calendar private iCal links).

@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Beaumont Family TV</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Figtree:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: a TV stage. Map takes the left two thirds, the dinner call and the family
+   list sit on the right, the calendar runs along the bottom. On a 16:9 TV it fills the
+   screen exactly with no scrolling; on a phone it stacks.
+   Single dark look on purpose: it runs on OLED panels, so the ground is true black. */
+:root{
+  color-scheme:dark;
+  --bg:#000;
+  --panel:#0d1114;
+  --line:#1f272c;
+  --fg:#eef2f3;
+  --muted:#8b989f;
+  --dinner:#ffc24a;
+  --dinner-soft:rgba(255,194,74,.16);
+  --land:#090d0f;
+  --road:#1e262b;
+  --road-main:#2a343a;
+  --water:#0c2331;
+  --water-text:#3f7896;
+  --park:#0d1d15;
+  --park-text:#3d7355;
+  --on-color:#06090a;
+  --c-ella:#c9a4ff;
+  --c-jo:#5ccaff;
+  --c-max:#b4e26a;
+  --c-ben:#ff7d68;
+  --display:"Bricolage Grotesque","Avenir Next","Segoe UI",system-ui,sans-serif;
+  --body:"Figtree","Segoe UI",system-ui,-apple-system,sans-serif;
+}
+*{box-sizing:border-box}
+body{
+  background:var(--bg);color:var(--fg);font-family:var(--body);font-size:1rem;line-height:1.4;
+  padding-block:16px 24px;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));
+  padding-right:max(16px, env(safe-area-inset-right, 0px));
+}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible{outline:2px solid var(--dinner);outline-offset:2px}
+
+.stage{
+  max-width:1500px;margin:0 auto;display:grid;gap:20px;
+  grid-template-columns:minmax(0,1fr);
+  grid-template-areas:"head" "dinner" "map" "people" "cal" "foot";
+  transition:translate 2s ease;
+}
+@media (min-width:960px){
+  .stage{
+    grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);
+    grid-template-areas:"head head" "map dinner" "map people" "cal cal" "foot foot";
+    grid-template-rows:auto auto 1fr auto auto;gap:24px;
+  }
+}
+body[data-view="lounge"] .stage{grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "map" "people" "foot";grid-template-rows:none}
+body[data-view="lounge"] .dinner,body[data-view="lounge"] .cal{display:none}
+
+/* header */
+.head{grid-area:head;display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px 24px}
+.clock{font-family:var(--display);font-weight:700;font-size:clamp(3.4rem,8vw,6.5rem);line-height:.9;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.date{color:var(--muted);font-size:clamp(1rem,1.6vw,1.35rem);margin-top:6px}
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.seg{display:flex;border:1px solid var(--line);border-radius:999px;padding:3px}
+.seg button{background:none;border:0;border-radius:999px;padding:8px 16px;color:var(--muted);font-weight:600}
+.seg button[aria-pressed="true"]{background:var(--fg);color:var(--on-color)}
+.ghost{background:none;border:1px solid var(--line);border-radius:999px;padding:8px 16px;font-weight:600}
+.sample{color:var(--muted);font-size:.85rem;letter-spacing:.06em;text-transform:uppercase;flex-basis:100%;text-align:right}
+@media (max-width:959px){.sample{text-align:left}}
+
+/* map */
+.map{grid-area:map;align-self:start;border-radius:18px;overflow:hidden;border:1px solid var(--line);aspect-ratio:5/3;max-width:100%;background:var(--land)}
+.map svg{display:block;width:100%;height:100%}
+.land{fill:var(--land)}
+.water{fill:none;stroke:var(--water);stroke-width:36;stroke-linecap:round}
+.park{fill:var(--park)}
+.rail{fill:none;stroke:var(--road-main);stroke-width:4;stroke-dasharray:14 8}
+.road{fill:none;stroke:var(--road);stroke-width:10;stroke-linecap:round}
+.road.main{stroke:var(--road-main);stroke-width:15}
+.trail{fill:none;stroke-width:6;stroke-linecap:round;stroke-linejoin:round;opacity:.75;transition:opacity .6s}
+.lbl{font-family:var(--body);font-weight:600;font-size:26px;fill:var(--fg)}
+.lbl.minor{font-size:19px;font-weight:500;fill:var(--muted);letter-spacing:.04em}
+.lbl.water-t{fill:var(--water-text);font-style:italic;font-size:19px;font-weight:500}
+.lbl.park-t{fill:var(--park-text);font-size:19px;font-weight:500}
+.place{fill:var(--land);stroke:var(--muted);stroke-width:3}
+.homebase{fill:var(--fg)}
+.who circle.dot{stroke:var(--land);stroke-width:4}
+.who text{font-family:var(--display);font-weight:700;font-size:22px;fill:var(--on-color);text-anchor:middle;dominant-baseline:central}
+.who .ring{fill:none;stroke-width:3;opacity:0;transform-box:fill-box;transform-origin:center}
+.who.moving .ring{animation:ping 2.2s ease-out infinite}
+@keyframes ping{0%{opacity:.8;transform:scale(1)}100%{opacity:0;transform:scale(2.1)}}
+@media (prefers-reduced-motion:reduce){.who.moving .ring{animation:none}.stage{transition:none}}
+
+/* dinner */
+.dinner{grid-area:dinner;background:var(--panel);border-radius:18px;padding:22px 22px 18px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.eyebrow{font-size:.8rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.dinner h2{margin:0;font-family:var(--display);font-weight:700;font-size:clamp(1.9rem,3.1vw,2.9rem);line-height:1.02;letter-spacing:-.02em;color:var(--dinner);text-wrap:balance;font-variant-numeric:tabular-nums}
+.dinner p{margin:0;color:var(--fg);font-size:1.05rem}
+.tl{position:relative;height:80px;margin:4px 12px 0}
+.tl .base{position:absolute;left:0;right:0;top:40px;height:2px;background:var(--line)}
+.tl .band{position:absolute;top:30px;height:22px;background:var(--dinner-soft);border-left:2px solid var(--dinner);border-right:2px solid var(--dinner);border-radius:3px}
+.tl .now{position:absolute;top:0;height:56px;width:2px;margin-left:-1px;background:var(--fg)}
+.tl .arr{position:absolute;width:24px;height:24px;margin-left:-12px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:13px;color:var(--on-color);border:2px solid var(--panel)}
+.tl .arr.l0{top:2px}.tl .arr.l1{top:29px}
+.tl .tick{position:absolute;top:60px;transform:translateX(-50%);font-size:.8rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.cook{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid var(--line);padding-top:14px}
+.cook span{color:var(--muted)}
+.stepper{display:flex;align-items:center;gap:10px}
+.stepper button{width:42px;height:42px;border-radius:50%;border:1px solid var(--line);background:none;font-size:1.3rem;line-height:1}
+.stepper output{min-width:4.2em;text-align:center;font-weight:700;font-variant-numeric:tabular-nums}
+
+/* people */
+.people{grid-area:people;list-style:none;margin:0;padding:0;display:flex;flex-direction:column;min-width:0}
+.people li{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:14px;align-items:center;padding:12px 4px;border-bottom:1px solid var(--line)}
+.people li:last-child{border-bottom:0}
+.av{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:1.15rem;color:var(--on-color)}
+.nm{font-weight:700;font-size:1.15rem}
+.sub{color:var(--muted);font-size:.95rem}
+.st{font-family:var(--display);font-weight:700;font-size:1.25rem;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.people li.is-home .st{color:var(--muted);font-weight:500}
+body[data-view="lounge"] .people{flex-direction:row;flex-wrap:wrap;gap:0 32px}
+body[data-view="lounge"] .people li{flex:1 1 260px;border-bottom:0}
+
+/* calendar */
+.cal{grid-area:cal;display:grid;gap:20px 40px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));border-top:1px solid var(--line);padding-top:18px}
+.cal h3{margin:0 0 8px;font-family:var(--display);font-size:1.3rem;font-weight:700}
+.cal h3 small{font-family:var(--body);font-size:.95rem;font-weight:500;color:var(--muted);margin-left:.4em}
+.cal ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.cal li{display:grid;grid-template-columns:4.2em 12px minmax(0,1fr);gap:10px;align-items:baseline;font-size:1.05rem}
+.cal time{color:var(--muted);font-variant-numeric:tabular-nums}
+.cal .pip{width:10px;height:10px;border-radius:50%;align-self:center}
+.cal .pip.all{background:none;border:2px solid var(--muted)}
+.cal b{font-weight:600}
+.cal .where{color:var(--muted)}
+.cal li.past{opacity:.38}
+
+.foot{grid-area:foot;color:var(--muted);font-size:.9rem;max-width:65ch;margin:0}
+
+/* TV fit: on a big landscape screen the stage fills the viewport exactly, no scrolling.
+   Type scales with the screen, so 1080p and 4K look the same from the sofa. */
+@media (min-width:1600px) and (min-aspect-ratio:3/2){
+  html{font-size:min(.85vw,1.5vh);height:100%}
+  body{height:100%;overflow:hidden;padding-block:2.2vh}
+  .stage{
+    height:100%;max-width:none;padding-inline:1.2vw;
+    grid-template-areas:"head head" "map dinner" "map people" "cal cal";
+    grid-template-rows:auto auto minmax(0,1fr) auto;
+  }
+  body[data-view="lounge"] .stage{grid-template-areas:"head" "map" "people";grid-template-rows:auto minmax(0,1fr) auto}
+  .foot{display:none}
+  .head > div:first-child{display:flex;align-items:baseline;gap:1.4rem}
+  .clock{font-size:4.8rem}
+  .date{font-size:1.5rem;margin:0}
+  .map{align-self:stretch;aspect-ratio:auto;height:100%;min-height:0}
+  body[data-view="kitchen"] .people{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 1.5rem;align-content:start}
+  body[data-view="kitchen"] .people li{border-bottom:0;grid-template-columns:44px minmax(0,1fr)}
+  body[data-view="kitchen"] .people .st{grid-column:2;text-align:left;margin-top:-10px}
+  .cal{grid-template-columns:repeat(3,minmax(0,1fr));padding-top:14px}
+  .cal ul{gap:5px}
+}
+</style>
+</head>
+<body>
+<style>body{margin:0}</style>
+
+<div class="stage" id="stage">
+  <header class="head">
+    <div>
+      <div class="clock" id="clock">17:20</div>
+      <div class="date" id="date"></div>
+    </div>
+    <div class="controls">
+      <div class="seg" role="group" aria-label="Which TV">
+        <button id="view-kitchen" type="button" aria-pressed="true">Kitchen</button>
+        <button id="view-lounge" type="button" aria-pressed="false">Lounge</button>
+      </div>
+      <button class="ghost" id="btn-play" type="button">Pause</button>
+      <button class="ghost" id="btn-restart" type="button">Restart</button>
+      <div class="sample">Sample data, sped up</div>
+    </div>
+  </header>
+
+  <section class="map" aria-label="Map">
+    <svg viewBox="0 0 1000 600" role="img" aria-label="Sample town map showing where each family member is">
+      <rect class="land" width="1000" height="600"></rect>
+      <path class="water" d="M540,615 C620,520 760,570 830,470 S950,400 1015,370"></path>
+      <rect class="park" x="545" y="215" width="140" height="100" rx="14"></rect>
+      <path class="rail" d="M0,120 L150,150 L300,90 L470,-5"></path>
+
+      <path class="road" d="M60,200 H960"></path>
+      <path class="road" d="M60,260 H520"></path>
+      <path class="road main" d="M40,330 H960"></path>
+      <path class="road" d="M200,420 H800"></path>
+      <path class="road" d="M100,500 H700"></path>
+      <path class="road" d="M150,150 V500"></path>
+      <path class="road" d="M340,120 V540"></path>
+      <path class="road" d="M520,140 V560"></path>
+      <path class="road" d="M700,80 V500"></path>
+      <path class="road" d="M880,110 V420"></path>
+
+      <text class="lbl park-t" x="615" y="271" text-anchor="middle">The Rec</text>
+      <text class="lbl water-t" x="880" y="525" text-anchor="middle">River Arle</text>
+      <text class="lbl minor" x="800" y="318" text-anchor="middle">High Street</text>
+
+      <path class="trail" id="t-jo" stroke="var(--c-jo)" d="M0,120 L150,150 V260 H340 V330 H520"></path>
+      <path class="trail" id="t-max" stroke="var(--c-max)" d="M240,500 H340 V420 H520 V330"></path>
+      <path class="trail" id="t-ben" stroke="var(--c-ben)" d="M880,110 V200 H700 V330 H520"></path>
+
+      <rect class="place" x="868" y="98" width="24" height="24" rx="5"></rect>
+      <text class="lbl" x="880" y="72" text-anchor="middle">Office</text>
+      <rect class="place" x="138" y="138" width="24" height="24" rx="5"></rect>
+      <text class="lbl" x="128" y="186" text-anchor="end">Station</text>
+      <rect class="place" x="228" y="488" width="24" height="24" rx="5"></rect>
+      <text class="lbl" x="240" y="552" text-anchor="middle">Pool</text>
+
+      <path class="homebase" d="M520,312 L540,330 H534 V348 H506 V330 H500 Z"></path>
+      <text class="lbl" x="520" y="262" text-anchor="middle">Home</text>
+
+      <g class="who" id="m-ella"><circle class="ring" r="22" stroke="var(--c-ella)"></circle><circle class="dot" r="22" fill="var(--c-ella)"></circle><text>E</text></g>
+      <g class="who" id="m-jo"><circle class="ring" r="22" stroke="var(--c-jo)"></circle><circle class="dot" r="22" fill="var(--c-jo)"></circle><text>J</text></g>
+      <g class="who" id="m-max"><circle class="ring" r="22" stroke="var(--c-max)"></circle><circle class="dot" r="22" fill="var(--c-max)"></circle><text>M</text></g>
+      <g class="who" id="m-ben"><circle class="ring" r="22" stroke="var(--c-ben)"></circle><circle class="dot" r="22" fill="var(--c-ben)"></circle><text>B</text></g>
+    </svg>
+  </section>
+
+  <section class="dinner" aria-live="polite">
+    <div class="eyebrow">Dinner</div>
+    <h2 id="dinner-head">Start cooking at 17:55</h2>
+    <p id="dinner-sub"></p>
+    <div class="tl" id="tl" aria-hidden="true">
+      <div class="base"></div>
+      <div class="band" id="tl-band"></div>
+      <div class="now" id="tl-now"></div>
+    </div>
+    <div class="cook">
+      <span>Tonight's dinner takes</span>
+      <div class="stepper">
+        <button id="cook-less" type="button" aria-label="Five minutes less">&minus;</button>
+        <output id="cook-out">30 min</output>
+        <button id="cook-more" type="button" aria-label="Five minutes more">+</button>
+      </div>
+    </div>
+  </section>
+
+  <ul class="people" id="people" aria-label="Family"></ul>
+
+  <section class="cal" id="cal" aria-label="Calendar"></section>
+
+  <p class="foot">Everything here is sample data: the names, the town, the movements and the calendar. On a 16:9 TV the screen fills edge to edge with no scrolling, and shifts a couple of pixels every minute so nothing burns into the OLED.</p>
+</div>
+
+<script>
+(function(){
+  var $=function(id){return document.getElementById(id)};
+  var T0=1040,T1=1130,A=1035,B=1140,MS_PER_MIN=1100,HOME=[520,330];
+  function fmt(m){m=Math.floor(m);return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0')}
+  function pos(m){return Math.min(100,Math.max(0,(m-A)/(B-A)*100))}
+
+  // Sample movements
+  var people=[
+    {id:'ella',name:'Ella',home:true,since:970,off:[-36,-36]},
+    {id:'jo',name:'Jo',dep:1040,arr:1084,mode:function(m){return m<1050?'On the train':'Walking from the station'},off:[-36,36]},
+    {id:'max',name:'Max',dep:1080,arr:1098,before:'At the pool',mode:function(){return 'Cycling'},off:[36,36]},
+    {id:'ben',name:'Ben',dep:1060,arr:1102,before:'At the office',mode:function(){return 'Driving'},off:[36,-36]}
+  ];
+
+  // Sample calendar: three days starting today, so it never looks stale.
+  function iso(n){var d=new Date();d.setDate(d.getDate()+n);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+  var days=[
+    {d:iso(0),ev:[
+      {s:'17:30',e:'17:35',who:'jo',name:'Jo',what:'Train gets in'},
+      {s:'18:00',e:'18:05',who:'max',name:'Max',what:'Training finishes'},
+      {s:'19:30',e:'21:30',what:'Film night'}
+    ]},
+    {d:iso(1),ev:[
+      {what:'Recycling collection'},
+      {s:'08:30',e:'09:30',who:'ben',name:'Ben',what:'Car MOT'},
+      {s:'16:00',e:'17:30',who:'max',name:'Max',what:'Training'},
+      {s:'18:30',e:'20:30',who:'jo',name:'Jo',what:'Book club'}
+    ]},
+    {d:iso(2),ev:[
+      {s:'09:00',e:'09:30',who:'ella',name:'Ella',what:'School photo day'},
+      {s:'15:15',e:'18:00',what:'School sports fixture',where:'away'},
+      {s:'19:00',e:'20:00',who:'ben',name:'Ben',what:'Swimming'}
+    ]}
+  ];
+
+  // build people rows
+  var list=$('people');
+  people.forEach(function(p){
+    var li=document.createElement('li');li.id='row-'+p.id;
+    li.innerHTML='<div class="av" style="background:var(--c-'+p.id+')">'+p.name[0]+'</div>'+
+      '<div><div class="nm">'+p.name+'</div><div class="sub" id="sub-'+p.id+'"></div></div>'+
+      '<div class="st" id="st-'+p.id+'"></div>';
+    list.appendChild(li);
+    p.row=li;p.marker=$('m-'+p.id);
+    if(!p.home){p.trail=$('t-'+p.id);p.len=p.trail.getTotalLength()}
+  });
+
+  // timeline furniture
+  var tl=$('tl');
+  [1050,1080,1110].forEach(function(m){
+    var s=document.createElement('span');s.className='tick';s.style.left=pos(m)+'%';s.textContent=fmt(m);tl.appendChild(s);
+  });
+  people.filter(function(p){return !p.home}).sort(function(a,b){return a.arr-b.arr}).forEach(function(p,i){
+    var d=document.createElement('div');d.className='arr l'+(i%2);d.style.left=pos(p.arr)+'%';
+    d.style.background='var(--c-'+p.id+')';d.textContent=p.name[0];tl.appendChild(d);
+  });
+
+  // calendar
+  var now=new Date();
+  $('date').textContent=now.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'});
+  function dayTitle(d){
+    var day=new Date(d+'T12:00:00Z'),t=new Date();
+    var diff=Math.round((Date.UTC(day.getUTCFullYear(),day.getUTCMonth(),day.getUTCDate())-Date.UTC(t.getFullYear(),t.getMonth(),t.getDate()))/864e5);
+    var name=diff===0?'Today':diff===1?'Tomorrow':day.toLocaleDateString('en-GB',{weekday:'long',timeZone:'UTC'});
+    return name+'<small>'+day.toLocaleDateString('en-GB',{day:'numeric',month:'short',timeZone:'UTC'})+'</small>';
+  }
+  var calHtml='';
+  days.forEach(function(day){
+    calHtml+='<div><h3>'+dayTitle(day.d)+'</h3><ul>';
+    day.ev.forEach(function(e){
+      var end=e.s?day.d+'T'+e.e+':00Z':day.d+'T23:59:59Z';
+      calHtml+='<li data-end="'+end+'"><time>'+(e.s||'All day')+'</time>'+
+        '<span class="pip'+(e.who?'':' all')+'"'+(e.who?' style="background:var(--c-'+e.who+')"':'')+'></span>'+
+        '<span>'+(e.name?'<b>'+e.name+'</b> &middot; '+e.what:'<b>'+e.what+'</b>')+
+        (e.where?' <span class="where">&middot; '+e.where+'</span>':'')+'</span></li>';
+    });
+    calHtml+='</ul></div>';
+  });
+  $('cal').innerHTML=calHtml;
+  function dimPast(){
+    var t=Date.now();
+    document.querySelectorAll('#cal li[data-end]').forEach(function(li){li.classList.toggle('past',new Date(li.dataset.end).getTime()<t)});
+  }
+  dimPast();setInterval(dimPast,60000);
+
+  var cook=30,sim=T0,last=0,lastMin=-1,dirty=true;
+  var playing=!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches);
+  $('btn-play').textContent=playing?'Pause':'Play';
+
+  function place(p,m){
+    var x=HOME[0]+p.off[0],y=HOME[1]+p.off[1],prog=1;
+    if(!p.home){
+      prog=Math.min(1,Math.max(0,(m-p.dep)/(p.arr-p.dep)));
+      var pt=p.trail.getPointAtLength(p.len*prog);
+      var k=Math.min(1,Math.max(0,(prog-.9)/.1)),s=k*k*(3-2*k);
+      x=pt.x+p.off[0]*s;y=pt.y+p.off[1]*s;
+      p.trail.style.strokeDasharray=(p.len*(1-prog))+' '+p.len;
+      p.trail.style.strokeDashoffset=-(p.len*prog);
+      p.trail.style.opacity=prog>=1?0:'';
+    }
+    p.marker.setAttribute('transform','translate('+x.toFixed(1)+' '+y.toFixed(1)+')');
+    p.marker.classList.toggle('moving',prog>0&&prog<1);
+  }
+
+  function texts(m){
+    $('clock').textContent=fmt(m);
+    people.forEach(function(p){
+      var st,sub,home=false;
+      if(p.home){st='Home';sub='Since '+fmt(p.since);home=true}
+      else if(m<p.dep){st='Leaves '+fmt(p.dep);sub=p.before+' · home '+fmt(p.arr)}
+      else if(m<p.arr){st=(p.arr-m)+' min away';sub=p.mode(m)+' · home '+fmt(p.arr)}
+      else{st='Home';sub='Since '+fmt(p.arr);home=true}
+      $('st-'+p.id).textContent=st;$('sub-'+p.id).textContent=sub;
+      p.row.classList.toggle('is-home',home);
+    });
+    var away=people.filter(function(p){return !p.home});
+    var lastP=away.reduce(function(a,b){return b.arr>a.arr?b:a});
+    var serve=Math.ceil(lastP.arr/5)*5,start=serve-cook,head,sub;
+    if(m<start){head='Start cooking at '+fmt(start);sub='That is in '+(start-m)+' min. Dinner lands at '+fmt(serve)+', just after '+lastP.name+' walks in at '+fmt(lastP.arr)+'.'}
+    else if(m<serve){head='Time to cook';sub='Serve at '+fmt(serve)+', '+(serve-m)+' min from now. '+lastP.name+' is last in at '+fmt(lastP.arr)+'.'}
+    else{head='Everyone is home';sub='Dinner is on the table.'}
+    $('dinner-head').textContent=head;$('dinner-sub').textContent=sub;
+    var l=pos(start);$('tl-band').style.left=l+'%';$('tl-band').style.width=Math.max(0,pos(serve)-l)+'%';
+    $('cook-out').textContent=cook+' min';
+  }
+
+  function draw(){
+    people.forEach(function(p){place(p,sim)});
+    $('tl-now').style.left=pos(sim)+'%';
+    var m=Math.floor(sim);
+    if(m!==lastMin||dirty){lastMin=m;dirty=false;texts(m)}
+  }
+  function frame(ts){
+    if(playing&&last){sim+=Math.min(ts-last,250)/MS_PER_MIN;if(sim>T1+4)sim=T0}
+    last=ts;draw();requestAnimationFrame(frame);
+  }
+  draw();requestAnimationFrame(frame);
+
+  $('btn-play').addEventListener('click',function(){playing=!playing;this.textContent=playing?'Pause':'Play'});
+  $('btn-restart').addEventListener('click',function(){sim=T0;dirty=true});
+  $('cook-less').addEventListener('click',function(){cook=Math.max(10,cook-5);dirty=true});
+  $('cook-more').addEventListener('click',function(){cook=Math.min(90,cook+5);dirty=true});
+  function setView(v){
+    document.body.dataset.view=v;
+    $('view-kitchen').setAttribute('aria-pressed',v==='kitchen');
+    $('view-lounge').setAttribute('aria-pressed',v==='lounge');
+  }
+  $('view-kitchen').addEventListener('click',function(){setView('kitchen')});
+  $('view-lounge').addEventListener('click',function(){setView('lounge')});
+  setView('kitchen');
+
+  // OLED care: nudge the whole stage a couple of pixels every minute
+  setInterval(function(){
+    var r=function(){return Math.round(Math.random()*4-2)};
+    $('stage').style.translate=r()+'px '+r()+'px';
+  },60000);
+})();
+</script>
+</body>
+</html>
