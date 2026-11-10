@@ -36,6 +36,15 @@ static const WakeTime WAKE_SCHEDULE[] = {
 // ---- Time ----------------------------------------------------------------
 #define TZ_INFO "GMT0BST,M3.5.0/1,M10.5.0"   // UK time with daylight saving
 
+// ---- Live page updates -----------------------------------------------------
+// The TVs load the dashboard page from this URL, so a git push changes what
+// they show without reflashing. Leave it out to use the repo's master branch
+// (the default in main.cpp); point it at another branch to try changes on the
+// TVs before merging; set it to "" to serve only the built-in copy.
+// Whoever can push to that branch controls the page, and the page can read
+// the family's locations - keep the GitHub account locked down.
+//#define PAGE_URL "https://raw.githubusercontent.com/ben-beaumont/beaumont-family-tv/master/esp32-controller/page/index.html"
+
 // ---- Calendar --------------------------------------------------------------
 // A private calendar's "Secret address in iCal format" (Google Calendar ->
 // Settings -> this calendar, under "Integrate calendar"). Leave blank to

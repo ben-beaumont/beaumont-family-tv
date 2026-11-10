@@ -8,7 +8,11 @@
 // - Serves the stand-in dashboard and a status page itself
 //
 // Web endpoints on the ESP32:
-//   /                 the dashboard page (today + upcoming calendar)
+//   /                 loader: the TV's browser fetches the latest dashboard
+//                     page from the repo (PAGE_URL) and shows it, so page
+//                     changes go live with a git push, no reflash
+//   /builtin          the copy of the dashboard baked into this firmware
+//                     (what the loader falls back to if GitHub is unreachable)
 //   /status           JSON: what each TV is doing
 //   /launch?tv=N      show the dashboard on TV N now
 //   /wake?tv=N        wake TV N and show the dashboard
@@ -52,6 +56,66 @@ static const char GOOGLE_ROOT_CA[] =
 "9J+uHXqnLrmvT/aDHQ4thQEd0dlq7A/Cr8deVl5c1RxYIigL9zC2L7F8AjEA8GE8\n"
 "p/SgguMh1YQdc4acLa/KNJvxn7kjNuK8YAOdgLOaVsjh4rsUecrNIdSUtUlD\n"
 "-----END CERTIFICATE-----\n";
+
+// ---- Live page updates ----------------------------------------------------
+// Where the TVs fetch the dashboard page from. Override in config.h; "" turns
+// live updates off and serves the built-in copy only.
+#ifndef PAGE_URL
+#define PAGE_URL \
+  "https://raw.githubusercontent.com/ben-beaumont/beaumont-family-tv/master/esp32-controller/page/index.html"
+#endif
+
+// Served at "/". The fetch happens in the TV's browser, not on the ESP32: the
+// browser has memory to spare and verifies GitHub's certificate properly,
+// whereas another TLS connection here would compete for heap with the TV
+// sockets. The last good copy is kept in the browser's localStorage, so the
+// page still appears if GitHub is slow or down; with nothing cached yet it
+// falls back to /builtin. A page served over plain http (this one) may load
+// https content, but not the other way round - which is why the ESP32 stays
+// the origin and the page's /locations.json, /calendar.ics etc. keep working.
+static const char LOADER_HTML[] = R"LOADER(<!doctype html>
+<html><head><meta charset="utf-8"><title>Family Hub</title>
+<style>html,body{margin:0;height:100%;background:#000}</style></head><body>
+<script>
+(function () {
+  var url = "%PAGE_URL%", done = false, cached = null;
+  try {
+    cached = localStorage.getItem('fh-page');
+    localStorage.setItem('fh-page-url', url);
+  } catch (e) {}
+  function show(html) {
+    if (done) return;
+    done = true;
+    document.open();
+    document.write(html);
+    document.close();
+  }
+  function fallback() {
+    if (done) return;
+    if (cached) return show(cached);
+    done = true;
+    location.replace('/builtin' + location.search);
+  }
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', url + (url.indexOf('?') < 0 ? '?' : '&') + 't=' + Date.now());
+  // With a cached copy to fall back on, don't keep the screen black for long.
+  xhr.timeout = cached ? 4000 : 10000;
+  xhr.onload = function () {
+    var html = xhr.responseText;
+    // Must look like the whole page, not a truncated download or an error body.
+    var complete = html.length > 500 && html.lastIndexOf('</html>') > html.length - 20;
+    if (xhr.status !== 200 || !complete) return fallback();
+    if (html !== cached) {
+      try { localStorage.setItem('fh-page', html); } catch (e) {}
+    }
+    show(html);
+  };
+  xhr.onerror = xhr.ontimeout = fallback;
+  xhr.send();
+})();
+</script>
+</body></html>
+)LOADER";
 
 static const size_t CALENDAR_MAX_BYTES = 300000;  // guard against an unexpectedly huge feed
 static String calendarIcs;
@@ -585,7 +649,16 @@ static void setupWeb() {
   // pressure that large allocation can silently fail, sending a 200 with
   // an empty body (a blank page on the TV) instead of an error. send_P
   // writes straight from flash, no big heap copy needed.
-  server.on("/", []() { server.send_P(200, "text/html", PAGE_HTML); });
+  server.on("/builtin", []() { server.send_P(200, "text/html", PAGE_HTML); });
+
+  // The loader is small (about 1.5 KB), so building it as a String is fine.
+  server.on("/", []() {
+    if (!strlen(PAGE_URL)) return server.send_P(200, "text/html", PAGE_HTML);
+    String html(LOADER_HTML);
+    html.replace("%PAGE_URL%", PAGE_URL);
+    server.sendHeader("Cache-Control", "no-store");
+    server.send(200, "text/html", html);
+  });
 
   server.on("/status", []() {
     JsonDocument doc;

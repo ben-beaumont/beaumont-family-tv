@@ -64,6 +64,16 @@ go dark at night.
   no scrolling on a 16:9 screen (checked at 1920x1080), and drifts a couple
   of pixels each minute. The map is a hand-drawn SVG stand-in for MapKit JS,
   and it is not wired to Supabase or the calendar feed yet.
+- Live page updates (written, **not yet compiled or tested on hardware**): the
+  dashboard's source of truth is now `esp32-controller/page/index.html`. The
+  ESP32 serves a loader at `/`; the TV's browser fetches the page from
+  `PAGE_URL` (default: raw GitHub, `master`), caches it in localStorage, and
+  falls back to `/builtin` (the copy baked into the firmware). The fetch is in
+  the browser on purpose - another TLS connection on the ESP32 would compete
+  for heap with the TV sockets. `include/page.h` is generated from
+  `page/index.html` by `tools/embed_page.py` before each build; never edit
+  `page.h` directly. So: page changes = push to `master`; firmware changes
+  (`src/`) = reflash.
 - A Pine A64 was tried as the controller and abandoned (power/boot problems).
 
 ## Hardware and environment

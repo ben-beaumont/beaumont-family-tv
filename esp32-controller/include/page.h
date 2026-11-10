@@ -1,9 +1,8 @@
 #pragma once
 
-// Stand-in dashboard served by the ESP32 until the real family app exists.
-// Dark and dim for OLED, and it drifts every minute so nothing burns in.
-// Rotates between a calendar page (Today timeline + Upcoming list) and a
-// locations page (everyone's zone/ETA, from Supabase via /locations.json).
+// GENERATED from page/index.html by tools/embed_page.py - edit that file, not
+// this one. This is the built-in copy of the dashboard, used when the TV
+// can't fetch the live page from the repo.
 static const char PAGE_HTML[] = R"HTML(<!doctype html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -656,6 +655,33 @@ showPage(forcedPageIndex >= 0 ? forcedPageIndex : 0);
 if (forcedPageIndex < 0) {
   setInterval(function () { showPage((pageIndex + 1) % PAGES.length); }, 20000);
 }
+// Live updates. The ESP32 serves a small loader at "/" that fetches this file
+// from the repo and keeps the last good copy in localStorage. Here we re-check
+// every 10 minutes and go back through the loader if the repo copy has
+// changed, so a push reaches a TV that is already showing the page.
+(function () {
+  var url = null, cached = null;
+  try {
+    url = localStorage.getItem('fh-page-url');
+    cached = localStorage.getItem('fh-page');
+  } catch (e) {}
+  var atRoot = location.pathname === '/';
+  // No loader in use, or storage isn't working (would reload forever).
+  if (!url || (atRoot && cached === null)) return;
+  setInterval(function () {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', url + (url.indexOf('?') < 0 ? '?' : '&') + 't=' + Date.now());
+    xhr.timeout = 15000;
+    xhr.onload = function () {
+      var html = xhr.responseText;
+      var complete = html.length > 500 && html.lastIndexOf('</ht' + 'ml>') > html.length - 20;
+      if (xhr.status === 200 && complete && html !== cached) {
+        location.replace('/' + location.search);
+      }
+    };
+    xhr.send();
+  }, 10 * 60000);
+})();
 </script>
 </body></html>
 )HTML";

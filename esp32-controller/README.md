@@ -45,6 +45,32 @@ clock served by the ESP32 itself, which is safe for OLED screens.
 3. Set the times in `WAKE_SCHEDULE`. Test with `http://<esp32 address>/wake?tv=1`
    while the TV is off.
 
+## Changing the dashboard without reflashing
+
+The dashboard page lives in `page/index.html`. The ESP32 serves a small loader
+at `/`; the TV's browser uses it to fetch the latest `page/index.html` from
+the repo's `master` branch on GitHub and show it. So to change what the TVs
+show: edit `page/index.html`, commit, push to `master`.
+
+- A TV already showing the dashboard checks every 10 minutes and reloads
+  itself when the file has changed. GitHub caches raw files for about 5
+  minutes, so allow up to 15 minutes, or re-open the page
+  (`/launch?tv=0`) to pick it up sooner.
+- The browser keeps the last good copy, so the page still shows if GitHub is
+  slow or down. With nothing cached yet it falls back to the copy baked into
+  the firmware, which you can always see at `/builtin`.
+- `include/page.h` is that baked-in copy. It is generated from
+  `page/index.html` by `tools/embed_page.py` on every build - don't edit it
+  by hand. Reflash now and then so the fallback doesn't get too stale.
+- To try a change on the TVs before merging, set `PAGE_URL` in `config.h` to
+  the raw URL of your branch and reflash once. Set it to `""` to turn live
+  updates off.
+- The firmware itself (anything in `src/`) still needs flashing.
+
+Because the page can read the family's locations, whoever can push to the
+branch in `PAGE_URL` controls what runs on the TVs. Keep two-factor
+authentication on the GitHub account.
+
 ## Calendar
 
 The dashboard page rotates between the clock and an upcoming-events agenda
